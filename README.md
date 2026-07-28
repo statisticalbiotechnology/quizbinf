@@ -61,6 +61,9 @@ GitHub Actions builds the image and publishes it to
 immutable tag (`sha-<commit>` or `v0.1.0`) on SciLifeLab Serve rather than
 `latest`. The GHCR package must be set to **public** for Serve to pull it.
 
+⚠️ The workflows are staged in [`deploy/github-workflows/`](deploy/github-workflows/)
+and need one move to activate — see the README there.
+
 ## Status
 
 Working end to end against mock login. **KTH OIDC login is still a stub** —

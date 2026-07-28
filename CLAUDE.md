@@ -127,8 +127,8 @@ so we do not manage our own Ingress objects. Consequences for how we build:
   to each component. Multi-stage builds; the Angular app is served as static
   files (from the backend or an nginx container).
 - **Images are built by GitHub Actions and published to GHCR**
-  (`.github/workflows/publish-image.yml` → `ghcr.io/<owner>/quizbinf`), which
-  is where Serve pulls from. The workflow runs on pushes to `main` and on
+  (`publish-image.yml` → `ghcr.io/<owner>/quizbinf`), which is where Serve
+  pulls from. The workflow runs on pushes to `main` and on
   `v*` tags; it needs no configured secret because it authenticates with the
   built-in `GITHUB_TOKEN` (`packages: write`). Tags produced: `latest` (from
   `main`), the branch name, `sha-<commit>`, and semver tags for releases.
@@ -156,11 +156,17 @@ so we do not manage our own Ingress objects. Consequences for how we build:
 
 ## CI
 
-- `.github/workflows/ci.yml` runs backend pytest and frontend unit tests +
-  production build on every push and PR.
-- `.github/workflows/publish-image.yml` builds `deploy/Dockerfile` (context =
-  repo root) and pushes to GHCR on `main` and on `v*` tags. Cut a release
-  image with `git tag v0.2.0 && git push origin v0.2.0`.
+Two workflows are written but **staged in `deploy/github-workflows/`, not yet
+active** — see that directory's README for the one-command activation. They
+could not be committed under `.github/workflows/` because the token used to
+create them lacked the `workflow` scope; pushing them from a normal account
+works fine.
+
+- `ci.yml` runs backend pytest and frontend unit tests + production build on
+  every push and PR.
+- `publish-image.yml` builds `deploy/Dockerfile` (context = repo root) and
+  pushes to GHCR on `main` and on `v*` tags. Cut a release image with
+  `git tag v0.2.0 && git push origin v0.2.0`.
 
 ## Development conventions
 
