@@ -51,6 +51,11 @@ export interface Histogram {
   total: number;
 }
 
+export interface LiveCount {
+  open_round: Round | null;
+  answered: number;
+}
+
 export interface Comparison {
   question_id: number;
   pre: Record<number, number> | null;

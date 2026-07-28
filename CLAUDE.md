@@ -28,6 +28,19 @@ Key product requirements:
 - **Teacher control.** The teacher drives the flow live: open question →
   close pre round → discussion → open post round → close → reveal histogram.
   Clients should follow along in (near) real time.
+- **The submission window is the attendance guard.** Answers are accepted
+  *only* while a round is open; between rounds every submission is rejected
+  (409). The teacher opens a short window, halts it, runs the discussion,
+  opens the second window, and halts again before showing statistics. See
+  `tests/test_submission_window.py`, which encodes this sequence. Note the
+  limit: this stops answering *outside* the window, not a student who is sent
+  the session code and answers from elsewhere during it (see below).
+- **Never project a distribution while its round is open.** The teacher's
+  screen is the projected one; showing the vote split before the discussion
+  defeats the point of asking twice. While a round is open the teacher sees
+  only an answer *count* (`GET /api/sessions/{code}/live`, teacher-only,
+  count without breakdown); bars for a phase appear once that round is
+  closed.
 - **Pre/post pairing.** Every answer is stored with the round it belongs to
   (`pre` or `post`) so the two distributions can be compared per question.
 
@@ -113,6 +126,16 @@ so we do not manage our own Ingress objects. Consequences for how we build:
 - Everything ships as **Docker images**; keep Dockerfiles in `deploy/` or next
   to each component. Multi-stage builds; the Angular app is served as static
   files (from the backend or an nginx container).
+- **Images are built by GitHub Actions and published to GHCR**
+  (`.github/workflows/publish-image.yml` → `ghcr.io/<owner>/quizbinf`), which
+  is where Serve pulls from. The workflow runs on pushes to `main` and on
+  `v*` tags; it needs no configured secret because it authenticates with the
+  built-in `GITHUB_TOKEN` (`packages: write`). Tags produced: `latest` (from
+  `main`), the branch name, `sha-<commit>`, and semver tags for releases.
+  **The GHCR package must be made public** (Packages → quizbinf → Package
+  settings → Change visibility) or Serve cannot pull it; GHCR packages are
+  private by default. Prefer deploying an immutable `sha-` or version tag
+  over `latest` so a redeploy is reproducible.
 - Serve deploys a single app image behind its own ingress with TLS, so prefer
   **one image** that serves both the API and the built Angular app as static
   files from FastAPI. No Kubernetes manifests of our own are needed for Serve;
@@ -130,6 +153,14 @@ so we do not manage our own Ingress objects. Consequences for how we build:
   otherwise a simple StatefulSet with a PVC. Answers are the only precious
   data — keep the schema migration story simple (one migration tool, run as an
   init step on deploy).
+
+## CI
+
+- `.github/workflows/ci.yml` runs backend pytest and frontend unit tests +
+  production build on every push and PR.
+- `.github/workflows/publish-image.yml` builds `deploy/Dockerfile` (context =
+  repo root) and pushes to GHCR on `main` and on `v*` tags. Cut a release
+  image with `git tag v0.2.0 && git push origin v0.2.0`.
 
 ## Development conventions
 
@@ -204,6 +235,7 @@ alembic upgrade head
 | `GET /api/sessions/{code}/join-url` | teacher | the URL the QR code encodes |
 | `POST /api/sessions/{code}/rounds` | teacher | open a `pre`/`post` round |
 | `POST /api/sessions/{code}/rounds/{id}/close` | teacher | close the open round |
+| `GET /api/sessions/{code}/live` | teacher | answer count for the open round (no breakdown) |
 | `GET /api/sessions/{code}/questions/{id}/comparison` | teacher | pre vs post counts |
 | `GET /api/sessions/{code}/state` | student | full state snapshot (resync) |
 | `GET /api/sessions/{code}/events` | student | SSE state stream |
@@ -235,8 +267,13 @@ alembic upgrade head
 - [ ] **CSV export** of aggregate results (and a minimal teacher-only
       per-student participation export).
 - [ ] **Presenter polish:** a full-screen projection mode (large QR, large
-      histogram, no chrome) and live answer counts while a round is open —
-      currently the teacher sees counts only via the comparison endpoint.
+      histogram, no chrome).
+- [ ] **Stronger attendance guard.** The open/closed window stops answering
+      between rounds, but a student who is texted the 6-character session
+      code can still answer from outside the lecture hall during a window.
+      Options if this turns out to matter: a per-round code shown only on the
+      projected slide and required with the answer, or a short auto-closing
+      window. Not built — decide whether it is worth the friction.
 - [ ] **Question editing/reordering and quiz deletion** — only create and
       delete-question exist today.
 - [ ] Consider showing students the correct answer after the post round

@@ -8,9 +8,12 @@ answer.
 
 - Students join by scanning a **QR code** projected in class and log in with
   their **KTH-id**.
-- The teacher drives the flow live: open the *pre* round → close it →
-  discussion → open the *post* round → close → show the two distributions
-  side by side.
+- The teacher drives the flow live: open the *pre* round → halt it →
+  discussion → open the *post* round → halt → show the two distributions
+  side by side. Answers are accepted **only** while a round is open.
+- While a round is open the teacher sees just a count of answers received;
+  the distribution appears only after the round is halted, so a projected
+  screen never shows the class how it voted before the discussion.
 - Results shown in class are aggregate only; individual answers are never
   exposed to other students.
 
@@ -50,6 +53,13 @@ To run the production image locally, `cd deploy && docker compose up --build`.
 cd backend && . .venv/bin/activate && pytest
 cd frontend && npm test
 ```
+
+## Container image
+
+GitHub Actions builds the image and publishes it to
+`ghcr.io/<owner>/quizbinf` on every push to `main` and on `v*` tags. Deploy an
+immutable tag (`sha-<commit>` or `v0.1.0`) on SciLifeLab Serve rather than
+`latest`. The GHCR package must be set to **public** for Serve to pull it.
 
 ## Status
 

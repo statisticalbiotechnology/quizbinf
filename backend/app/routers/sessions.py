@@ -16,6 +16,7 @@ from ..schemas import (
     AnswerIn,
     ComparisonOut,
     HistogramOut,
+    LiveCountOut,
     OpenRoundIn,
     RoundOut,
     SessionOut,
@@ -155,6 +156,29 @@ def histogram(
     counts = service.round_histogram(db, round_)
     return HistogramOut(
         round_id=round_.id, phase=round_.phase, counts=counts, total=sum(counts.values())
+    )
+
+
+@router.get("/{code}/live", response_model=LiveCountOut)
+def live_count(
+    code: str,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+) -> LiveCountOut:
+    """How many answers have arrived in the currently open round.
+
+    Deliberately a *count only*, never the per-choice breakdown: the teacher's
+    screen is the projected one, and showing the distribution while the round
+    is open would bias the peer discussion that follows.
+    """
+    session = _session_by_code(db, code)
+    if session.quiz.owner_id != teacher.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your session")
+    round_ = service.get_open_round(db, session)
+    if round_ is None:
+        return LiveCountOut(open_round=None, answered=0)
+    return LiveCountOut(
+        open_round=RoundOut.model_validate(round_), answered=len(round_.answers)
     )
 
 

@@ -6,6 +6,7 @@ import { API_BASE } from './api.config';
 import {
   Comparison,
   Histogram,
+  LiveCount,
   Phase,
   Question,
   QuestionInput,
@@ -82,6 +83,10 @@ export class ApiService {
       `${API_BASE}/api/sessions/${code}/rounds/${roundId}/histogram`,
       this.opts,
     );
+  }
+  /** Answer count for the open round — count only, safe to project. */
+  liveCount(code: string): Observable<LiveCount> {
+    return this.http.get<LiveCount>(`${API_BASE}/api/sessions/${code}/live`, this.opts);
   }
   comparison(code: string, questionId: number): Observable<Comparison> {
     return this.http.get<Comparison>(

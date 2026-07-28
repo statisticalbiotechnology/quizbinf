@@ -119,3 +119,10 @@ class ComparisonOut(BaseModel):
     question_id: int
     pre: dict[int, int] | None
     post: dict[int, int] | None
+
+
+class LiveCountOut(BaseModel):
+    """Progress of the open round: how many have answered, not what they chose."""
+
+    open_round: RoundOut | None
+    answered: int
