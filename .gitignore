@@ -1,28 +1,32 @@
-# Angular specific
-/dist/
-/out-tsc/
-/tmp/
-/coverage/
-/e2e/test-output/
-/.angular/
+# --- Frontend (Angular) ---
+# Unanchored so they match frontend/ as well as the repo root.
+dist/
+out-tsc/
+coverage/
 .angular/
-
-# Node modules and dependency files
-/node_modules/
-/package-lock.json
-/yarn.lock
-
-# Environment files
-/.env
-
-# Angular CLI and build artefacts
+node_modules/
+yarn.lock
 /.angular-cli.json
 /.ng/
-
-# TypeScript cache
 *.tsbuildinfo
 
-# Logs
+# frontend/package-lock.json is intentionally committed (the Docker build
+# uses `npm ci`, which requires it).
+
+# --- Backend (Python) ---
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+# Local SQLite databases
+*.db
+
+# --- Environment / secrets ---
+.env
+!*.env.example
+
+# --- Logs ---
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

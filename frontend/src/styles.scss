@@ -1,0 +1,43 @@
+/* Global styles. Mobile-first: students answer on their phones. */
+
+:root {
+  --accent: #2c7a51;
+  --border: #d8d8d8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+  color: #222;
+}
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f6f6f6;
+  padding: 0.5rem 0.9rem;
+  font: inherit;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+input,
+textarea {
+  font: inherit;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+a {
+  color: var(--accent);
+}

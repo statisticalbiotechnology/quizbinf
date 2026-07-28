@@ -1,0 +1,9 @@
+# Build context is the repo root (docker build -f deploy/Dockerfile .).
+**/node_modules
+**/.venv
+**/__pycache__
+**/dist
+**/.angular
+**/*.db
+**/.env
+.git
