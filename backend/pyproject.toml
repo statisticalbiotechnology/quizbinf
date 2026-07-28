@@ -30,3 +30,7 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put the backend root on sys.path so `app.*` and the `tests.*` helpers import
+# the same way under both `pytest` (console script) and `python -m pytest`.
+# Without this, only the latter works, because it alone adds the cwd.
+pythonpath = ["."]
