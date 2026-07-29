@@ -1,0 +1,51 @@
+# Run the *published* image locally — the exact artifact SciLifeLab Serve
+# pulls — instead of rebuilding from source. Useful when Serve is unavailable
+# (maintenance) or to reproduce a deployed version bit-for-bit.
+#
+#   cd deploy
+#   IMAGE_TAG=sha-33ad38d docker compose -f docker-compose.ghcr.yml up
+#
+# The repository is private, so the GHCR package is private too: log in once
+# with a personal access token that has read:packages before pulling.
+#   echo $GHCR_TOKEN | docker login ghcr.io -u <github-username> --password-stdin
+# (Making the package public removes this step — and Serve needs it public
+# anyway, unless you give Serve pull credentials.)
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: quizbinf
+      POSTGRES_PASSWORD: quizbinf
+      POSTGRES_DB: quizbinf
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quizbinf"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    # Prefer an immutable sha- tag over :latest so a rerun is reproducible.
+    image: ghcr.io/statisticalbiotechnology/quizbinf:${IMAGE_TAG:-latest}
+    environment:
+      DATABASE_URL: postgresql+psycopg://quizbinf:quizbinf@db:5432/quizbinf
+      SESSION_SECRET: local-dev-secret-change-me
+      # MUST match the URL students actually open, because the QR code is
+      # built from it. When testing through a tunnel, set this to the tunnel
+      # URL, e.g. PUBLIC_BASE_URL=https://something.trycloudflare.com
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      TEACHER_USERNAMES: ${TEACHER_USERNAMES:-lukask}
+      # Mock login: fine locally, but note it means *no* authentication —
+      # anyone reaching the URL can log in as any username, including one in
+      # TEACHER_USERNAMES. Never expose this to students.
+      MOCK_LOGIN: "true"
+      ENVIRONMENT: development
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

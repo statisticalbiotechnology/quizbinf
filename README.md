@@ -61,8 +61,33 @@ GitHub Actions builds the image and publishes it to
 immutable tag (`sha-<commit>` or `v0.1.0`) on SciLifeLab Serve rather than
 `latest`. The GHCR package must be set to **public** for Serve to pull it.
 
-⚠️ The workflows are staged in [`deploy/github-workflows/`](deploy/github-workflows/)
-and need one move to activate — see the README there.
+### Testing the published image without Serve
+
+When Serve is down for maintenance — or to reproduce a deployed version
+exactly — run the published image locally against Postgres:
+
+```bash
+cd deploy
+IMAGE_TAG=sha-33ad38d docker compose -f docker-compose.ghcr.yml up
+```
+
+That covers the image itself, the Alembic migration on startup, and Postgres.
+It does **not** cover the one thing only a real deployment exercises: whether
+SSE survives a reverse proxy. To test that — and the QR-code flow from an
+actual phone — expose the local container over a temporary public HTTPS URL:
+
+```bash
+cloudflared tunnel --url http://localhost:8000     # prints a https://…trycloudflare.com URL
+```
+
+Then restart the stack with `PUBLIC_BASE_URL` set to that URL, so the QR code
+encodes a hostname phones can reach. Open the teacher view on your laptop and
+the QR target on your phone, open a round, and check the phone updates without
+a manual refresh — that is the SSE-through-a-proxy test.
+
+⚠️ Mock login means **no authentication**: anyone with the URL can log in as
+any username, including one in `TEACHER_USERNAMES`. Keep tunnel URLs private
+and short-lived, and do not use them with real students until KTH OIDC lands.
 
 ## Status
 

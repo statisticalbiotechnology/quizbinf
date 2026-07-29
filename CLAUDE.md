@@ -156,17 +156,26 @@ so we do not manage our own Ingress objects. Consequences for how we build:
 
 ## CI
 
-Two workflows are written but **staged in `deploy/github-workflows/`, not yet
-active** — see that directory's README for the one-command activation. They
-could not be committed under `.github/workflows/` because the token used to
-create them lacked the `workflow` scope; pushing them from a normal account
-works fine.
+Both workflows are active in `.github/workflows/`.
 
 - `ci.yml` runs backend pytest and frontend unit tests + production build on
   every push and PR.
 - `publish-image.yml` builds `deploy/Dockerfile` (context = repo root) and
   pushes to GHCR on `main` and on `v*` tags. Cut a release image with
   `git tag v0.2.0 && git push origin v0.2.0`.
+
+Note for automated contributors: a token without the `workflow` scope cannot
+create or update files under `.github/workflows/`. Land such changes from an
+account that has it, or stage the file elsewhere and move it in a follow-up.
+
+### Testing a built image without Serve
+
+`deploy/docker-compose.ghcr.yml` runs the published GHCR image against
+Postgres locally — useful during Serve maintenance windows and for
+reproducing a specific deployed tag. It exercises the image and the Alembic
+startup migration but **not** SSE through a reverse proxy; for that, expose
+the container via a temporary tunnel and set `PUBLIC_BASE_URL` to the tunnel
+URL so the QR code resolves. See the README.
 
 ## Development conventions
 
