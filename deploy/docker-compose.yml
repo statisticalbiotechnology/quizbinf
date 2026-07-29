@@ -1,0 +1,40 @@
+# Local full-stack run for e2e testing: the single app image + PostgreSQL.
+# For day-to-day development prefer running ng serve and uvicorn directly
+# (see CLAUDE.md) — this is for testing the production image end to end.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: quizbinf
+      POSTGRES_PASSWORD: quizbinf
+      POSTGRES_DB: quizbinf
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quizbinf"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://quizbinf:quizbinf@db:5432/quizbinf
+      SESSION_SECRET: local-dev-secret-change-me
+      PUBLIC_BASE_URL: http://localhost:8000
+      TEACHER_USERNAMES: lukask
+      # Mock login for local e2e; hard-disabled when ENVIRONMENT=production.
+      MOCK_LOGIN: "true"
+      ENVIRONMENT: development
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
