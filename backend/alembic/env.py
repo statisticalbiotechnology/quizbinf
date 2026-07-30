@@ -14,7 +14,7 @@ from app import models  # noqa: F401  (registers all tables on Base.metadata)
 config = context.config
 
 # The database URL is a 12-factor env var, not a hardcoded ini value.
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+config.set_main_option("sqlalchemy.url", get_settings().resolved_database_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

@@ -12,10 +12,11 @@ class Base(DeclarativeBase):
 
 def _make_engine():
     settings = get_settings()
+    url = settings.resolved_database_url
     kwargs = {}
-    if settings.database_url.startswith("sqlite"):
+    if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
-    return create_engine(settings.database_url, **kwargs)
+    return create_engine(url, **kwargs)
 
 
 engine = _make_engine()

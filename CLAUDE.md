@@ -146,6 +146,14 @@ so we do not manage our own Ingress objects. Consequences for how we build:
   OIDC issuer/client-id/secret, session secret, public base URL (needed to
   build the QR-code URLs and OIDC redirect URI). Secrets come from Kubernetes
   `Secret`s — never commit them.
+- **Serve provides no env-var field and no managed database.** The app
+  therefore configures itself (see `deploy/SERVE.md`): settings are also read
+  from `/home/data/quizbinf.env` on the mounted volume; `DATABASE_URL`
+  defaults to SQLite on that volume; `SESSION_SECRET` is generated once and
+  persisted there; and `PUBLIC_BASE_URL` is derived from the request's
+  forwarded headers so the QR code resolves without configuration. Keep this
+  property — anything new that *must* be configured has to work through the
+  volume file, not an env var alone.
 - The app must work behind a reverse proxy at a fixed public hostname.
   `PUBLIC_BASE_URL` must be set to that hostname — the QR-code URL is built
   from it, so getting it wrong means students scan a code pointing nowhere.

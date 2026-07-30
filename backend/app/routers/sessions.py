@@ -12,6 +12,7 @@ from ..config import Settings, get_settings
 from ..db import SessionLocal, get_db
 from ..events import broadcaster
 from ..models import Answer, Choice, Phase, Question, Quiz, QuizSession, User
+from ..public_base import public_base_url
 from ..schemas import (
     AnswerIn,
     ComparisonOut,
@@ -89,13 +90,14 @@ def create_session(
 @router.get("/{code}/join-url")
 def join_url(
     code: str,
+    request: Request,
     db: Session = Depends(get_db),
     teacher: User = Depends(current_teacher),
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """The URL the projected QR code should encode."""
     session = _session_by_code(db, code)
-    return {"url": f"{settings.public_base_url.rstrip('/')}/s/{session.code}"}
+    return {"url": f"{public_base_url(request, settings)}/s/{session.code}"}
 
 
 @router.post("/{code}/rounds", response_model=RoundOut, status_code=status.HTTP_201_CREATED)
