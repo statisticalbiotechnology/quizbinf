@@ -1,0 +1,48 @@
+# Add this job to .github/workflows/ci.yml, alongside `backend` and `frontend`.
+#
+# It is kept here rather than committed straight into the workflow because a
+# token without the `workflow` scope cannot write under .github/workflows/.
+# Paste the `smoke:` block below into the `jobs:` map and delete this file.
+#
+# Runtime is about a minute: it builds the frontend, serves it from the
+# backend as the production image does, and drives a real browser through one
+# lecture — author a question, run a session, check the projected QR actually
+# renders, and confirm a student's page updates over SSE without a reload.
+
+  smoke:
+    name: Browser smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend
+        working-directory: backend
+        run: pip install -e .
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Chromium for Playwright
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run smoke test
+        working-directory: frontend
+        run: npm run e2e
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7

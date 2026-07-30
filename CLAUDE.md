@@ -195,6 +195,13 @@ URL so the QR code resolves. See the README.
   (`backend/tests/test_rounds.py`, `test_answers.py`). Frontend: at minimum,
   tests for the answer-submission and session-follow logic
   (`frontend/src/app/api.service.spec.ts`). Keep both green.
+- **A green build is not evidence the app renders.** A broken QR code shipped
+  twice with unit tests passing and `ng build` succeeding. `npm run e2e`
+  (Playwright, `frontend/e2e/smoke.spec.mjs`) drives a real browser through
+  one lecture against the built frontend served by the backend, and asserts
+  the things only a browser can see: that the projected QR image actually
+  loads (`naturalWidth > 0`), and that a student's page updates over SSE
+  without a reload. Run it before claiming a UI change works.
 - **Privacy:** individual answers are personal data (GDPR). Never expose
   per-student answers to other students; teacher views show aggregates.
   Provide an export (CSV) of aggregates, and keep any per-student export
@@ -233,6 +240,11 @@ cd backend && . .venv/bin/activate && pytest          # round + answer rules
 cd frontend && npm test                               # needs a Chrome/Chromium
 # headless (CI/containers):
 CHROME_BIN=/path/to/chrome npx ng test --watch=false --karma-config=karma.conf.js
+
+# browser smoke test: builds the frontend, serves it from the backend the way
+# the production image does, and drives one lecture end to end
+cd frontend && npm run e2e
+CHROME_BIN=/path/to/chrome npm run e2e                # if Chromium is not on PATH
 ```
 
 ### Migrations
