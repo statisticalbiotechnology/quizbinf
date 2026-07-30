@@ -17,6 +17,9 @@ dependencies = [
     "pydantic-settings>=2.4",
     "itsdangerous>=2.2",
     "psycopg[binary]>=3.2",
+    # QR codes are rendered server-side as SVG: the projected code is the only
+    # way students reach the app, so it must not depend on browser bundling.
+    "qrcode>=8.0",
 ]
 
 [project.optional-dependencies]

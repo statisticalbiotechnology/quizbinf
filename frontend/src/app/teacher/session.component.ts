@@ -1,7 +1,7 @@
 import { Component, OnDestroy, OnInit, signal } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
-import * as QRCode from 'qrcode';
 
+import { API_BASE } from '../api.config';
 import { ApiService } from '../api.service';
 import { Comparison, Phase, Question, Quiz, Round, SessionState } from '../models';
 
@@ -14,11 +14,15 @@ const LIVE_POLL_MS = 2000;
   template: `
     <div class="wrap">
       <div class="join">
-        <img [src]="qrDataUrl()" alt="QR code to join" width="200" height="200" />
+        <!-- Rendered by the server; see GET /api/sessions/{code}/qr.svg -->
+        <img class="qr" [src]="qrSrc" alt="QR code to join this session" />
         <div>
           <p>Students scan to join:</p>
           <code class="url">{{ joinUrl() }}</code>
-          <p class="code">Session code: <strong>{{ code }}</strong></p>
+          <p class="code">
+            …or go to <strong>{{ joinHost() }}</strong> and enter code
+            <strong>{{ code }}</strong>
+          </p>
         </div>
       </div>
 
@@ -80,7 +84,9 @@ const LIVE_POLL_MS = 2000;
       .wrap { max-width: 46rem; margin: 1.5rem auto; padding: 1rem; }
       .join { display: flex; gap: 1rem; align-items: center; border: 1px solid #ddd;
               border-radius: 8px; padding: 1rem; }
-      .url { font-size: 0.9rem; }
+      /* Large enough to scan from the back of a lecture hall when projected. */
+      .qr { width: 260px; height: 260px; display: block; }
+      .url { font-size: 0.9rem; word-break: break-all; }
       .status { font-size: 1.1rem; padding: 0.6rem 0.8rem; border-radius: 6px;
                 background: #f3f3f3; margin: 1rem 0; }
       .status.open { background: #eafaf1; }
@@ -109,8 +115,9 @@ export class TeacherSessionComponent implements OnInit, OnDestroy {
   questions = signal<Question[]>([]);
   comparisons = signal<Record<number, Comparison>>({});
   answered = signal(0);
-  qrDataUrl = signal<string>('');
   joinUrl = signal<string>('');
+  /** Same-origin, so the session cookie is sent with the image request. */
+  qrSrc = '';
   private teardown?: () => void;
   private pollTimer?: ReturnType<typeof setInterval>;
 
@@ -118,10 +125,8 @@ export class TeacherSessionComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.code = this.route.snapshot.paramMap.get('code') || '';
-    this.api.joinUrl(this.code).subscribe(({ url }) => {
-      this.joinUrl.set(url);
-      QRCode.toDataURL(url, { width: 200 }).then((d) => this.qrDataUrl.set(d));
-    });
+    this.qrSrc = `${API_BASE}/api/sessions/${this.code}/qr.svg`;
+    this.api.joinUrl(this.code).subscribe(({ url }) => this.joinUrl.set(url));
     this.refreshState();
     this.teardown = this.api.streamState(this.code, (s) => {
       this.state.set(s);
@@ -162,6 +167,17 @@ export class TeacherSessionComponent implements OnInit, OnDestroy {
         this.refreshComparisons();
       }
     });
+  }
+
+  /** Hostname students can type if they cannot scan the code. */
+  joinHost(): string {
+    const url = this.joinUrl();
+    if (!url) return '';
+    try {
+      return new URL(url).host;
+    } catch {
+      return '';
+    }
   }
 
   openRound(): Round | null {
