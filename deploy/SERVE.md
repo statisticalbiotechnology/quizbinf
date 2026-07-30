@@ -23,8 +23,21 @@ SQLite on that volume.
 Serve's documented example Dockerfile creates a uid-1000 user and ends with
 `USER $USER` ("Make sure the container is running as non-root"), so the
 cluster does not accept a container running as root. `deploy/Dockerfile`
-therefore installs dependencies as root, hands `/app` to `appuser` (uid 1000)
-and switches to it.
+therefore installs dependencies as root, hands `/app` to uid 1000 and
+switches to it.
+
+**The `USER` directive must be numeric** (`USER 1000`, not `USER appuser`).
+Kubernetes does not read `/etc/passwd` from the image, so under
+`runAsNonRoot: true` a named user fails admission with *"image has
+non-numeric user (appuser), cannot verify user is non-root"*. The pod never
+starts, and because the container never runs there is **no application log to
+look at** — the deployment simply fails. If a Serve deployment fails with no
+feedback at all, this class of admission error is the first thing to suspect.
+
+`/app` is owned `1000:0` with group permissions mirroring the user's, so the
+image also works on platforms that assign an arbitrary uid at runtime (such a
+uid is still in group 0). Verified by running the startup command as both uid
+1000 and an unrelated uid in group 0.
 
 Consequence for the volume: the mount must be writable by uid 1000. If it is
 not — for example because an earlier root-running image left files there — the

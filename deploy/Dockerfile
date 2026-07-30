@@ -29,11 +29,17 @@ COPY backend/ ./
 # Angular's application builder emits into dist/frontend/browser.
 COPY --from=frontend /frontend/dist/frontend/browser ./static
 
-# Writable by the runtime user: the SQLite fallback lands here when no
-# persistent volume is mounted (ephemeral, but the app still starts).
-RUN chown -R appuser:appuser /app
+# Owned by uid 1000, group 0, with group permissions mirroring the user's.
+# Group 0 matters on platforms that run containers under an arbitrary uid
+# (OpenShift-style): such a uid is still a member of group 0, so it can write
+# here. The SQLite fallback lands in /app when no persistent volume is mounted.
+RUN chown -R 1000:0 /app && chmod -R g=u /app
 
-USER appuser
+# Numeric, not `USER appuser`. Kubernetes does not read /etc/passwd from the
+# image, so with runAsNonRoot=true a *named* user fails admission with
+# "image has non-numeric user (appuser), cannot verify user is non-root" —
+# the pod never starts and no application log is produced.
+USER 1000
 
 EXPOSE 8000
 # --proxy-headers/--forwarded-allow-ips: the app sits behind the platform's
