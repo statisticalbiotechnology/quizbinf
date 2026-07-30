@@ -1,3 +1,4 @@
+import os
 import secrets
 from functools import lru_cache
 from pathlib import Path
@@ -83,7 +84,13 @@ class Settings(BaseSettings):
             return self.database_url
         data = self._writable_data_dir()
         if data is not None:
-            return f"sqlite:///{data / 'quizbinf.db'}"
+            db_file = data / "quizbinf.db"
+            # An existing file may belong to another uid — e.g. written by an
+            # earlier revision of this image that ran as root. SQLite would
+            # fail on write and take the container down at the migration step,
+            # so degrade to an ephemeral database instead of crash-looping.
+            if not db_file.exists() or os.access(db_file, os.W_OK):
+                return f"sqlite:///{db_file}"
         return "sqlite:///./quizbinf.db"
 
     @property

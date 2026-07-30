@@ -18,6 +18,22 @@ The 1 GB default volume is ample: a whole course of answers is well under a
 megabyte. Serve provides no managed database, so the app stores everything in
 SQLite on that volume.
 
+## The container must run as non-root
+
+Serve's documented example Dockerfile creates a uid-1000 user and ends with
+`USER $USER` ("Make sure the container is running as non-root"), so the
+cluster does not accept a container running as root. `deploy/Dockerfile`
+therefore installs dependencies as root, hands `/app` to `appuser` (uid 1000)
+and switches to it.
+
+Consequence for the volume: the mount must be writable by uid 1000. If it is
+not — for example because an earlier root-running image left files there — the
+app does **not** crash: it falls back to an ephemeral database and a
+per-process session secret, so the container starts but answers are lost on
+redeploy and logins drop on restart. If that happens, clear the stale
+root-owned `quizbinf.db` and `session_secret` from the project storage and
+redeploy.
+
 ## Configuration file
 
 There is no env-var field, so the app also reads settings from

@@ -17,12 +17,23 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+# SciLifeLab Serve requires containers to run as non-root, with uid 1000 in
+# their documented example. Dependencies are installed as root, then the app
+# directory is handed to the unprivileged user we switch to below.
+RUN useradd -m -u 1000 appuser
+
 COPY backend/pyproject.toml ./
 RUN pip install .
 
 COPY backend/ ./
 # Angular's application builder emits into dist/frontend/browser.
 COPY --from=frontend /frontend/dist/frontend/browser ./static
+
+# Writable by the runtime user: the SQLite fallback lands here when no
+# persistent volume is mounted (ephemeral, but the app still starts).
+RUN chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8000
 # --proxy-headers/--forwarded-allow-ips: the app sits behind the platform's

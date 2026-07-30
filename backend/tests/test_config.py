@@ -5,6 +5,10 @@ is no way to set environment variables. These tests pin the defaults that make
 the app deployable under that constraint.
 """
 
+import os
+
+import pytest
+
 from app.config import DEV_SECRET, Settings
 
 
@@ -24,6 +28,20 @@ def test_explicit_database_url_wins(tmp_path):
 
 def test_unwritable_data_dir_falls_back_without_crashing():
     s = Settings(data_dir="/proc/nonexistent/nope", database_url=None, _env_file=None)
+    assert s.resolved_database_url == "sqlite:///./quizbinf.db"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
+def test_unwritable_existing_database_falls_back_instead_of_crashing(tmp_path):
+    """An earlier root-run container may leave a database this uid cannot write.
+
+    Serve requires non-root containers, so a volume written by a previous
+    root image must not take the app down at the migration step.
+    """
+    db = tmp_path / "quizbinf.db"
+    db.touch()
+    db.chmod(0o444)
+    s = Settings(data_dir=str(tmp_path), database_url=None, _env_file=None)
     assert s.resolved_database_url == "sqlite:///./quizbinf.db"
 
 
