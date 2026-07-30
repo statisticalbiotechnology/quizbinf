@@ -12,7 +12,7 @@ SESSION_MAX_AGE = 12 * 3600  # one lecture day
 
 
 def _serializer(settings: Settings) -> URLSafeTimedSerializer:
-    return URLSafeTimedSerializer(settings.session_secret, salt="quizbinf-auth")
+    return URLSafeTimedSerializer(settings.resolved_session_secret, salt="quizbinf-auth")
 
 
 def set_session_cookie(response: Response, username: str, settings: Settings) -> None:

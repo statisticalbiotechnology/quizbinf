@@ -25,5 +25,10 @@ COPY backend/ ./
 COPY --from=frontend /frontend/dist/frontend/browser ./static
 
 EXPOSE 8000
+# --proxy-headers/--forwarded-allow-ips: the app sits behind the platform's
+# reverse proxy (SciLifeLab Serve terminates TLS), and it derives its own
+# public URL for the QR code from the forwarded headers when PUBLIC_BASE_URL
+# is not set. Only the platform's proxy can reach the container, so trusting
+# the forwarded headers here is safe.
 # Alembic runs migrations on start; then launch the ASGI server.
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]

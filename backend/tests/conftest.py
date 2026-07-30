@@ -6,6 +6,9 @@ import pytest
 # Configure a throwaway SQLite DB and enable mock login before app import.
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
 os.environ["DATABASE_URL"] = f"sqlite:///{_db_path}"
+# Keep the generated session secret out of the real data directory —
+# otherwise running the tests writes into /home/data on the host.
+os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="quizbinf-test-data-")
 os.environ["MOCK_LOGIN"] = "true"
 os.environ["ENVIRONMENT"] = "development"
 os.environ["TEACHER_USERNAMES"] = "teach"
