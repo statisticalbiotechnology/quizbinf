@@ -63,27 +63,51 @@ immutable tag (`sha-<commit>` or `v0.1.0`) on SciLifeLab Serve rather than
 
 ### Testing the published image without Serve
 
-When Serve is down for maintenance — or to reproduce a deployed version
-exactly — run the published image locally against Postgres:
+**Single container (simplest).** No Postgres, no container networking — the
+app falls back to SQLite when `DATABASE_URL` is unset:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e MOCK_LOGIN=true -e ENVIRONMENT=development -e TEACHER_USERNAMES=<your-kth-id> \
+  ghcr.io/statisticalbiotechnology/quizbinf:sha-<tag>
+```
+
+Data is lost when the container stops, which is fine for a rehearsal. Add
+`-v ./quizdata:/home/data` to keep it, if the mount is writable by uid 1000.
+
+**With Postgres**, closer to a real deployment:
 
 ```bash
 cd deploy
-IMAGE_TAG=sha-33ad38d docker compose -f docker-compose.ghcr.yml up
+IMAGE_TAG=sha-<tag> HOST_PORT=8000 docker compose -f docker-compose.ghcr.yml up
 ```
 
-That covers the image itself, the Alembic migration on startup, and Postgres.
-It does **not** cover the one thing only a real deployment exercises: whether
-SSE survives a reverse proxy. To test that — and the QR-code flow from an
-actual phone — expose the local container over a temporary public HTTPS URL:
+This needs a compose implementation that resolves service names between
+containers. Docker Compose v2 does; podman behind the older Python
+`docker-compose` shim may fail with `failed to resolve host 'db'`, in which
+case use the single-container command above.
+
+### Testing the classroom flow from a phone
+
+Neither of the above covers what only a real deployment exercises: whether SSE
+survives a reverse proxy. To test that, and the QR-code flow from an actual
+phone, expose the container over a temporary public HTTPS URL — in a *second*
+terminal, leaving the app running in the first:
 
 ```bash
-cloudflared tunnel --url http://localhost:8000     # prints a https://…trycloudflare.com URL
+ssh -R 80:localhost:8000 nokey@localhost.run   # prints a https://….lhr.life URL
+# or, if installed:  cloudflared tunnel --url http://localhost:8000
 ```
 
-Then restart the stack with `PUBLIC_BASE_URL` set to that URL, so the QR code
-encodes a hostname phones can reach. Open the teacher view on your laptop and
-the QR target on your phone, open a round, and check the phone updates without
-a manual refresh — that is the SSE-through-a-proxy test.
+Open the printed URL. `PUBLIC_BASE_URL` does not need setting: the app derives
+its hostname from the request, so the QR code is correct even though a free
+tunnel's name changes on every run.
+
+Then: log in as the teacher, create a question, run a session, scan the QR with
+a phone, and open a round. **The phone should show the question without being
+reloaded** — that is the SSE-through-a-proxy test. Answer on the phone and the
+teacher's counter should advance while still showing no distribution; the bars
+appear only after the round is halted.
 
 ⚠️ Mock login means **no authentication**: anyone with the URL can log in as
 any username, including one in `TEACHER_USERNAMES`. Keep tunnel URLs private
