@@ -1,7 +1,11 @@
 import asyncio
+import io
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import qrcode
+import qrcode.constants
+import qrcode.image.svg
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
@@ -98,6 +102,42 @@ def join_url(
     """The URL the projected QR code should encode."""
     session = _session_by_code(db, code)
     return {"url": f"{public_base_url(request, settings)}/s/{session.code}"}
+
+
+@router.get("/{code}/qr.svg", include_in_schema=False)
+def join_qr(
+    code: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """The projected QR code, rendered server-side as SVG.
+
+    Generated here rather than in the browser because this code is the only
+    way students reach the app: a bundling or interop problem in a client-side
+    QR library would leave the teacher projecting a broken image, which is not
+    recoverable in the middle of a lecture. SVG also scales losslessly for
+    projection.
+    """
+    session = _session_by_code(db, code)
+    url = f"{public_base_url(request, settings)}/s/{session.code}"
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(url)
+    qr.make(fit=True)
+    buf = io.BytesIO()
+    qr.make_image(image_factory=qrcode.image.svg.SvgPathImage).save(buf)
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/svg+xml",
+        # The session code is stable, but the derived host is not; keep it fresh.
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post("/{code}/rounds", response_model=RoundOut, status_code=status.HTTP_201_CREATED)
