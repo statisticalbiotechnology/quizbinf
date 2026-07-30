@@ -125,7 +125,11 @@ export class TeacherSessionComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.code = this.route.snapshot.paramMap.get('code') || '';
-    this.qrSrc = `${API_BASE}/api/sessions/${this.code}/qr.svg`;
+    // Cache-buster: before this endpoint existed, the same URL fell through to
+    // the SPA catch-all and returned index.html with 200, which browsers
+    // cached. Without a unique query a teacher who saw the old build gets that
+    // cached HTML back and the QR renders as a broken image.
+    this.qrSrc = `${API_BASE}/api/sessions/${this.code}/qr.svg?v=${Date.now()}`;
     this.api.joinUrl(this.code).subscribe(({ url }) => this.joinUrl.set(url));
     this.refreshState();
     this.teardown = this.api.streamState(this.code, (s) => {
