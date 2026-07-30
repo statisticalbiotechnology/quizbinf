@@ -42,7 +42,8 @@ services:
       MOCK_LOGIN: "true"
       ENVIRONMENT: development
     ports:
-      - "8000:8000"
+      # Override the host side when 8000 is taken: HOST_PORT=8010 docker compose ...
+      - "${HOST_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
