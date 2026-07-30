@@ -8,7 +8,7 @@ plus a file on the mounted volume.
 
 | Field | Value |
 | --- | --- |
-| Docker image | `ghcr.io/statisticalbiotechnology/quizbinf:sha-<commit>` |
+| Docker image | `ghcr.io/statisticalbiotechnology/quizbinf:sha-<commit>` — always a **new** tag; Serve does not re-pull a tag it has already deployed |
 | Port | `8000` (Serve allows 3000–9999) |
 | Mount path | `/home/data` — **never `/app`**, which would shadow the application code |
 | Title | quizbinf — in-class quiz for bioinformatics teaching |
@@ -17,6 +17,24 @@ plus a file on the mounted volume.
 The 1 GB default volume is ample: a whole course of answers is well under a
 megabyte. Serve provides no managed database, so the app stores everything in
 SQLite on that volume.
+
+## Serve starts the container with ./start-script.sh
+
+Serve does **not** use the image's `CMD`. It runs `./start-script.sh` from the
+working directory, so that file must exist at `/app/start-script.sh` and be
+executable. Without it the deployment fails with
+
+```
+/bin/sh: 1: ./start-script.sh: not found
+```
+
+and produces no application log, because nothing ever starts — the deployment
+simply reports failure. `deploy/start-script.sh` holds the startup sequence
+(Alembic migration, then uvicorn) and the Dockerfile both copies it in and
+sets it as `ENTRYPOINT`, so the same sequence runs whether the platform
+honours `ENTRYPOINT` or invokes the script itself.
+
+Do not move the startup command back into `CMD`.
 
 ## The container must run as non-root
 

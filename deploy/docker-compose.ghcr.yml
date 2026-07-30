@@ -31,10 +31,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://quizbinf:quizbinf@db:5432/quizbinf
       SESSION_SECRET: local-dev-secret-change-me
-      # MUST match the URL students actually open, because the QR code is
-      # built from it. When testing through a tunnel, set this to the tunnel
-      # URL, e.g. PUBLIC_BASE_URL=https://something.trycloudflare.com
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      # Left empty on purpose: the app then derives its public URL from the
+      # request, so the QR code is correct whether you open it on localhost or
+      # through a tunnel whose hostname changes on every run. Set it only to
+      # override that (e.g. a fixed hostname the app cannot see itself).
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       TEACHER_USERNAMES: ${TEACHER_USERNAMES:-lukask}
       # Mock login: fine locally, but note it means *no* authentication —
       # anyone reaching the URL can log in as any username, including one in
@@ -42,7 +43,8 @@ services:
       MOCK_LOGIN: "true"
       ENVIRONMENT: development
     ports:
-      - "8000:8000"
+      # Override the host side when 8000 is taken: HOST_PORT=8010 docker compose ...
+      - "${HOST_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy

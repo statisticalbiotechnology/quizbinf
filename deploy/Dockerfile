@@ -29,6 +29,11 @@ COPY backend/ ./
 # Angular's application builder emits into dist/frontend/browser.
 COPY --from=frontend /frontend/dist/frontend/browser ./static
 
+# SciLifeLab Serve runs ./start-script.sh from the working directory instead
+# of the image's CMD, so it must exist here and be executable.
+COPY deploy/start-script.sh ./start-script.sh
+RUN chmod +x ./start-script.sh
+
 # Owned by uid 1000, group 0, with group permissions mirroring the user's.
 # Group 0 matters on platforms that run containers under an arbitrary uid
 # (OpenShift-style): such a uid is still a member of group 0, so it can write
@@ -42,10 +47,7 @@ RUN chown -R 1000:0 /app && chmod -R g=u /app
 USER 1000
 
 EXPOSE 8000
-# --proxy-headers/--forwarded-allow-ips: the app sits behind the platform's
-# reverse proxy (SciLifeLab Serve terminates TLS), and it derives its own
-# public URL for the QR code from the forwarded headers when PUBLIC_BASE_URL
-# is not set. Only the platform's proxy can reach the container, so trusting
-# the forwarded headers here is safe.
-# Alembic runs migrations on start; then launch the ASGI server.
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]
+# The startup sequence (migrate, then serve) lives in start-script.sh so that
+# it is identical whether the platform honours ENTRYPOINT or invokes the
+# script itself, as Serve does.
+ENTRYPOINT ["./start-script.sh"]

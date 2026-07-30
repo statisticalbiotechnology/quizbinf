@@ -25,7 +25,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://quizbinf:quizbinf@db:5432/quizbinf
       SESSION_SECRET: local-dev-secret-change-me
-      PUBLIC_BASE_URL: http://localhost:8000
+      # Empty: derived from the request, so a tunnelled hostname works too.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       TEACHER_USERNAMES: lukask
       # Mock login for local e2e; hard-disabled when ENVIRONMENT=production.
       MOCK_LOGIN: "true"
