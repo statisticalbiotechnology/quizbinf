@@ -53,6 +53,9 @@ def _state(db: Session, session: QuizSession, user: User | None) -> SessionState
         my_choice_id = answer.choice_id if answer else None
     return SessionState(
         code=session.code,
+        # The teacher view loads the session's questions from this; matching on
+        # the title instead breaks as soon as two quizzes share one.
+        quiz_id=session.quiz_id,
         quiz_title=session.quiz.title,
         open_round=RoundOut.model_validate(open_round) if open_round else None,
         question=question,

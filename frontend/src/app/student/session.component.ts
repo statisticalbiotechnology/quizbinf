@@ -77,10 +77,11 @@ export class StudentSessionComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.code = this.route.snapshot.paramMap.get('code') || '';
-    if (!this.auth.user()) {
-      this.router.navigate(['/login'], { queryParams: { next: `/s/${this.code}` } });
-      return;
-    }
+    // Do not decide on auth from auth.user() here: this page is loaded fresh
+    // when a student scans the QR code, and the session lookup that populates
+    // it has not resolved yet, so an already-logged-in student would be
+    // bounced to the login page every time. Ask the server instead and treat
+    // 401 as "needs login".
     this.resync();
     // Follow live state changes; also resync on connect since events sent
     // while disconnected are missed.
@@ -94,7 +95,16 @@ export class StudentSessionComponent implements OnInit, OnDestroy {
   private resync(): void {
     this.api.sessionState(this.code).subscribe({
       next: (s) => this.applyState(s),
-      error: () => this.error.set('Session not found.'),
+      error: (err) => {
+        if (err?.status === 401) {
+          // Send them to log in, then straight back to this session.
+          this.router.navigate(['/login'], {
+            queryParams: { next: `/s/${this.code}` },
+          });
+          return;
+        }
+        this.error.set('Session not found.');
+      },
     });
   }
 

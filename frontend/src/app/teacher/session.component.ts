@@ -3,7 +3,7 @@ import { ActivatedRoute } from '@angular/router';
 
 import { API_BASE } from '../api.config';
 import { ApiService } from '../api.service';
-import { Comparison, Phase, Question, Quiz, Round, SessionState } from '../models';
+import { Comparison, Phase, Question, Round, SessionState } from '../models';
 
 /** How often to refresh the answer counter while a round is open. */
 const LIVE_POLL_MS = 2000;
@@ -36,6 +36,15 @@ const LIVE_POLL_MS = 2000;
           <strong>CLOSED</strong> — no answers are being accepted.
         }
       </p>
+
+      @if (loadError()) {
+        <p class="error">{{ loadError() }}</p>
+      } @else if (!questions().length) {
+        <p class="empty">
+          This quiz has no questions yet, so there is nothing to open a round
+          for. Add one from the dashboard, then reload this page.
+        </p>
+      }
 
       @for (q of questions(); track q.id) {
         <section class="q">
@@ -106,6 +115,8 @@ const LIVE_POLL_MS = 2000;
       .sw.post { background: #2c7a51; }
       .legend { font-size: 0.85rem; color: #555; }
       .hidden-note { font-size: 0.85rem; color: #777; font-style: italic; }
+      .error { color: #c0392b; }
+      .empty { color: #777; }
     `,
   ],
 })
@@ -116,6 +127,7 @@ export class TeacherSessionComponent implements OnInit, OnDestroy {
   comparisons = signal<Record<number, Comparison>>({});
   answered = signal(0);
   joinUrl = signal<string>('');
+  loadError = signal<string>('');
   /** Same-origin, so the session cookie is sent with the image request. */
   qrSrc = '';
   private teardown?: () => void;
@@ -164,12 +176,15 @@ export class TeacherSessionComponent implements OnInit, OnDestroy {
   private loadQuestions(): void {
     const st = this.state();
     if (!st || this.questions().length) return;
-    this.api.listQuizzes().subscribe((quizzes: Quiz[]) => {
-      const quiz = quizzes.find((q) => q.title === st.quiz_title);
-      if (quiz) {
+    // Fetch the session's own quiz by id. Looking it up by title silently
+    // picked the wrong quiz when two shared a name, leaving the teacher with
+    // no round controls and no way to start collecting answers.
+    this.api.getQuiz(st.quiz_id).subscribe({
+      next: (quiz) => {
         this.questions.set(quiz.questions);
         this.refreshComparisons();
-      }
+      },
+      error: () => this.loadError.set('Could not load this session’s questions.'),
     });
   }
 

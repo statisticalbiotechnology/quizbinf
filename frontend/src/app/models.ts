@@ -38,6 +38,7 @@ export interface Round {
 
 export interface SessionState {
   code: string;
+  quiz_id: number;
   quiz_title: string;
   open_round: Round | null;
   question: Question | null;

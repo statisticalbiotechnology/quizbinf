@@ -102,6 +102,7 @@ class SessionState(BaseModel):
     """
 
     code: str
+    quiz_id: int
     quiz_title: str
     open_round: RoundOut | None
     question: QuestionOut | None  # the open round's question, choices unmarked

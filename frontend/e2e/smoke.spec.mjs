@@ -16,21 +16,35 @@ async function login(page, username) {
   await page.getByRole('button', { name: 'Log in' }).click();
 }
 
+/**
+ * Create a quiz with one question and return that quiz's section.
+ *
+ * Everything is scoped to the newly created section: other quizzes may already
+ * exist (from an earlier spec sharing this server), and page-wide selectors
+ * would then act on the wrong one.
+ */
 async function authorQuestion(page, quizTitle, questionText, choices) {
   await page.fill('input[name="title"]', quizTitle);
   await page.click('form.new-quiz button');
-  await page.waitForSelector('section.quiz');
 
-  await page.click('details summary');
-  await page.fill('textarea[name="qtext"]', questionText);
-  const inputs = page.locator('.add-q input[placeholder="Choice text"]');
+  // Locate by heading rather than by index or count: other quizzes may already
+  // exist, and the dashboard loads them asynchronously.
+  const quiz = page
+    .locator('section.quiz')
+    .filter({ has: page.getByRole('heading', { name: quizTitle, exact: true }) })
+    .last();
+  await expect(quiz).toBeVisible();
+  await quiz.locator('details summary').click();
+  await quiz.locator('textarea[name="qtext"]').fill(questionText);
+  const inputs = quiz.locator('.add-q input[placeholder="Choice text"]');
   for (let i = 0; i < choices.length; i++) {
     await inputs.nth(i).fill(choices[i]);
   }
   // First choice is the correct one.
-  await page.locator('.add-q input[type="radio"]').first().check();
-  await page.getByRole('button', { name: 'Save question' }).click();
-  await expect(page.locator('section.quiz ol li').first()).toContainText(questionText);
+  await quiz.locator('.add-q input[type="radio"]').first().check();
+  await quiz.getByRole('button', { name: 'Save question' }).click();
+  await expect(quiz.locator('ol li').first()).toContainText(questionText);
+  return quiz;
 }
 
 test('teacher runs a session and a student follows it live', async ({ browser }) => {
@@ -40,12 +54,12 @@ test('teacher runs a session and a student follows it live', async ({ browser })
   await login(teacher, 'teacher');
   await teacher.waitForURL('**/teacher');
 
-  await authorQuestion(teacher, 'Smoke quiz', 'Which aligns locally?', [
+  const quiz = await authorQuestion(teacher, 'Smoke quiz', 'Which aligns locally?', [
     'Smith-Waterman',
     'Needleman-Wunsch',
   ]);
 
-  await teacher.getByRole('button', { name: 'Run session' }).click();
+  await quiz.getByRole('button', { name: 'Run session' }).click();
   await teacher.waitForURL('**/teacher/session/**');
 
   // --- the projected QR code must actually render ---
@@ -75,9 +89,18 @@ test('teacher runs a session and a student follows it live', async ({ browser })
   const student = await studentCtx.newPage();
   const sessionPath = new URL(joinUrl).pathname;
 
-  await login(student, 'student1');
+  // The real journey: open the QR target cold, get sent to log in, come back.
   await student.goto(sessionPath);
+  await student.waitForURL('**/login**');
+  await student.getByPlaceholder('e.g. lukask').fill('student1');
+  await student.getByRole('button', { name: 'Log in' }).click();
+  await student.waitForURL('**' + sessionPath);
   await expect(student.locator('.waiting')).toBeVisible();
+
+  // Reloading must not bounce an already-logged-in student back to login.
+  await student.reload();
+  await expect(student.locator('.waiting')).toBeVisible();
+  expect(new URL(student.url()).pathname).toBe(sessionPath);
 
   // Teacher opens the first round; the student's page must update on its own.
   await teacher.getByRole('button', { name: 'Open 1st bout (pre)' }).click();
