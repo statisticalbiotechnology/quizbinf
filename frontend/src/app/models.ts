@@ -17,7 +17,10 @@ export interface Choice {
 export interface Question {
   id: number;
   position: number;
+  /** Markdown source, as authored. */
   text: string;
+  /** `text` rendered and sanitised server-side; bind this for display. */
+  text_html: string;
   image_url: string | null;
   choices: Choice[];
 }

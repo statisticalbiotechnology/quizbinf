@@ -51,6 +51,31 @@ export class ApiService {
   getQuiz(id: number): Observable<Quiz> {
     return this.http.get<Quiz>(`${API_BASE}/api/quizzes/${id}`, this.opts);
   }
+  /**
+   * Render Markdown for the authoring preview.
+   *
+   * Server-side so the preview uses the same renderer and sanitiser as the
+   * question students receive.
+   */
+  renderMarkdown(text: string): Observable<{ html: string }> {
+    return this.http.post<{ html: string }>(
+      `${API_BASE}/api/markdown/preview`,
+      { text },
+      this.opts,
+    );
+  }
+
+  /** Upload a figure; returns the Markdown to paste into a question. */
+  uploadImage(file: File): Observable<{ url: string; markdown: string }> {
+    const form = new FormData();
+    form.append('file', file);
+    return this.http.post<{ url: string; markdown: string }>(
+      `${API_BASE}/api/images`,
+      form,
+      this.opts,
+    );
+  }
+
   addQuestion(quizId: number, q: QuestionInput): Observable<Question> {
     return this.http.post<Question>(`${API_BASE}/api/quizzes/${quizId}/questions`, q, this.opts);
   }
@@ -80,6 +105,18 @@ export class ApiService {
       this.opts,
     );
   }
+  /**
+   * Discard a question's rounds so it can be run again.
+   *
+   * Destructive: the answers students gave for it go with them.
+   */
+  resetQuestion(code: string, questionId: number): Observable<{ removed_rounds: number }> {
+    return this.http.delete<{ removed_rounds: number }>(
+      `${API_BASE}/api/sessions/${code}/questions/${questionId}/rounds`,
+      this.opts,
+    );
+  }
+
   histogram(code: string, roundId: number): Observable<Histogram> {
     return this.http.get<Histogram>(
       `${API_BASE}/api/sessions/${code}/rounds/${roundId}/histogram`,

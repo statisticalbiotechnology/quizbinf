@@ -93,6 +93,18 @@ quizbinf/
 - **SSE broadcaster** (`app/events.py`) is in-memory and therefore assumes a
   **single replica**. Scaling out requires Postgres LISTEN/NOTIFY or Redis
   pub/sub instead.
+- **Question text is Markdown**, rendered *and sanitised on the server*
+  (`app/markdown.py`, markdown-it-py + nh3) and exposed as `text_html`
+  alongside the source. Clients bind it with `[innerHTML]`, so Angular
+  sanitises again — a teacher is trusted, but the output is shown to every
+  student in the room. Raw HTML in the source is escaped, not passed through.
+  The authoring preview renders through the same endpoint
+  (`POST /api/markdown/preview`) so it cannot disagree with what students see.
+- **Figures are uploaded to the app**, not linked from elsewhere: a question
+  must not break because an external host is down mid-lecture. Files land on
+  the mounted volume (`<data>/images/`), are teacher-only to upload, capped at
+  4 MB, checked against their magic bytes, and given unguessable names. **SVG
+  is refused** — it can carry script and would be served from our own origin.
 - **Questions are multiple choice with exactly one correct choice.** Keep the
   model and UI to single-select radio buttons; no free text, no multi-select.
   Nothing is marked correct by default when authoring — a pre-selected first
@@ -285,6 +297,9 @@ alembic upgrade head
 | `GET /api/sessions/{code}/participation` | teacher | **per-student** correctness (personal data) |
 | `GET /api/sessions/{code}/participation.csv` | teacher | the same as CSV |
 | `GET /api/sessions/{code}/questions/{id}/comparison` | teacher | pre vs post counts |
+| `DELETE /api/sessions/{code}/questions/{id}/rounds` | teacher | reset a question — **discards its answers** so it can be run again |
+| `POST /api/images` | teacher | upload a figure; returns Markdown to paste |
+| `POST /api/markdown/preview` | teacher | render Markdown for the authoring preview |
 | `GET /api/sessions/{code}/state` | student | full state snapshot (resync) |
 | `GET /api/sessions/{code}/events` | student | SSE state stream |
 | `POST /api/sessions/{code}/answers` | student | submit/change an answer |
@@ -321,6 +336,8 @@ alembic upgrade head
       projected slide and required with the answer, or a short auto-closing
       window. Not built — decide whether it is worth the friction.
 - [ ] **Question editing/reordering and quiz deletion** — only create and
-      delete-question exist today.
+      delete-question exist today. A question's rounds can be reset (Control
+      view), which discards its answers and lets it be asked again; that is a
+      rehearsal aid, not an editing feature.
 - [ ] Consider showing students the correct answer after the post round
       closes (currently never revealed to them).

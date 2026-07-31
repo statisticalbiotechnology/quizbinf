@@ -166,6 +166,14 @@ test('teacher runs a session and a student follows it live', async ({ browser })
   // Answering is refused once the round is halted.
   await expect(student.locator('.waiting')).toBeVisible();
 
+  // --- reset makes the question available again (for rehearsing) ---
+  await goto('Control');
+  teacher.once('dialog', (d) => d.accept());
+  await teacher.getByRole('button', { name: '↺ Reset' }).click();
+  await expect(teacher.getByRole('button', { name: 'Open 1st bout (pre)' })).toBeEnabled();
+  await goto('Report');
+  await expect(teacher.locator('.bar.pre')).toHaveCount(0);
+
   await teacherCtx.close();
   await studentCtx.close();
 });

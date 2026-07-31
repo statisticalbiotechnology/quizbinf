@@ -188,6 +188,28 @@ async def close_round(
     return round_
 
 
+@router.delete("/{code}/questions/{question_id}/rounds")
+async def reset_question(
+    code: str,
+    question_id: int,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+) -> dict:
+    """Discard this question's rounds so it can be run again.
+
+    Destructive — it deletes the answers students already gave for this
+    question in this session. Offered because a question can otherwise be
+    asked only once per session, which makes rehearsing awkward.
+    """
+    session = _owned_session(db, code, teacher)
+    question = db.get(Question, question_id)
+    if question is None or question.quiz_id != session.quiz_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Question not found")
+    removed = service.reset_question(db, session, question)
+    await _broadcast_state(session.code)
+    return {"removed_rounds": removed}
+
+
 @router.get("/{code}/rounds/{round_id}/histogram", response_model=HistogramOut)
 def histogram(
     code: str,

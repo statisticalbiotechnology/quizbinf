@@ -204,6 +204,24 @@ def participation_report(db: Session, session: QuizSession) -> list[dict]:
     return rows
 
 
+def reset_question(db: Session, session: QuizSession, question: Question) -> int:
+    """Discard both rounds of `question` so it can be asked again.
+
+    Destructive: the rounds carry the answers, so resetting throws away what
+    students submitted for this question in this session. Intended for
+    rehearsing and debugging, not for use mid-lecture — a question can
+    otherwise be run only once per session by design.
+
+    Returns how many rounds were removed.
+    """
+    doomed = [r for r in session.rounds if r.question_id == question.id]
+    for round_ in doomed:
+        db.delete(round_)  # cascades to that round's answers
+    db.commit()
+    db.refresh(session)
+    return len(doomed)
+
+
 def round_histogram(db: Session, round_: Round) -> dict[int, int]:
     """Aggregate answer counts per choice id. Never exposes who answered what."""
     counts = {choice.id: 0 for choice in round_.question.choices}
