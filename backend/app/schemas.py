@@ -102,6 +102,7 @@ class SessionState(BaseModel):
     """
 
     code: str
+    quiz_id: int
     quiz_title: str
     open_round: RoundOut | None
     question: QuestionOut | None  # the open round's question, choices unmarked
@@ -119,6 +120,13 @@ class ComparisonOut(BaseModel):
     question_id: int
     pre: dict[int, int] | None
     post: dict[int, int] | None
+
+
+class ParticipantsOut(BaseModel):
+    """Room size for the projected join screen. Counts only — never names."""
+
+    joined: int
+    connected: int
 
 
 class LiveCountOut(BaseModel):

@@ -34,6 +34,7 @@ describe('ApiService', () => {
   it('fetches session state for follow/resync', () => {
     const state: SessionState = {
       code: 'abc123',
+      quiz_id: 1,
       quiz_title: 'Bioinf',
       open_round: null,
       question: null,

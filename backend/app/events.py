@@ -23,6 +23,10 @@ class Broadcaster:
         if not self._subscribers[session_code]:
             del self._subscribers[session_code]
 
+    def connected(self, session_code: str) -> int:
+        """Open streams for a session — roughly, clients following right now."""
+        return len(self._subscribers.get(session_code, ()))
+
     async def publish(self, session_code: str, payload: dict) -> None:
         for queue in list(self._subscribers.get(session_code, ())):
             queue.put_nowait(payload)
