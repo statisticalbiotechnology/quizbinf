@@ -41,6 +41,13 @@ export const routes: Routes = [
           ),
       },
       {
+        path: 'people',
+        loadComponent: () =>
+          import('./teacher/session-people.component').then(
+            (m) => m.TeacherSessionPeopleComponent,
+          ),
+      },
+      {
         path: 'report',
         loadComponent: () =>
           import('./teacher/session-report.component').then(

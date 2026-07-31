@@ -8,6 +8,7 @@ import {
   Histogram,
   LiveCount,
   Participants,
+  ParticipationReport,
   Phase,
   Question,
   QuestionInput,
@@ -91,6 +92,20 @@ export class ApiService {
       `${API_BASE}/api/sessions/${code}/participants`,
       this.opts,
     );
+  }
+
+  /**
+   * Per-student participation. Personal data: teacher-only, never projected.
+   */
+  participation(code: string): Observable<ParticipationReport> {
+    return this.http.get<ParticipationReport>(
+      `${API_BASE}/api/sessions/${code}/participation`,
+      this.opts,
+    );
+  }
+
+  participationCsvUrl(code: string): string {
+    return `${API_BASE}/api/sessions/${code}/participation.csv`;
   }
 
   /** Answer count for the open round — count only, safe to project. */

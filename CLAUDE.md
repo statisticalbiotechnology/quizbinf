@@ -67,9 +67,12 @@ quizbinf/
   - *Student view* (`/s/:code`): mobile-first; scan QR → login → answer the
     active question. Follows the session over SSE and re-syncs via
     `GET /state`.
-  - *Teacher view* (`/teacher`, `/teacher/session/:code`): create
-    quizzes/questions, run a session (open/close rounds), display the QR code
-    and pre/post histograms for projection.
+  - *Teacher view*: `/teacher` to author, and four views of a running session,
+    each with its own URL so one can be projected from a second window —
+    `/teacher/session/:code/{join,control,report,people}`. Join shows the QR
+    and how many have joined; Control opens and halts rounds; Report shows the
+    pre/post distributions; **People is per-student and must not be
+    projected**.
 - **Backend:** **Python / FastAPI** (decided — Python fits the bioinformatics
   community that will maintain this, and FastAPI keeps the service small).
   One service exposing:
@@ -92,6 +95,9 @@ quizbinf/
   pub/sub instead.
 - **Questions are multiple choice with exactly one correct choice.** Keep the
   model and UI to single-select radio buttons; no free text, no multi-select.
+  Nothing is marked correct by default when authoring — a pre-selected first
+  choice silently made it the right answer whenever the teacher did not
+  notice, so the form refuses to save until one is chosen deliberately.
 - **Database:** PostgreSQL. Core entities:
   - `User` (KTH-id, display name, role: teacher/student)
   - `Quiz` → `Question` (text, ordered choices, exactly one correct choice,
@@ -205,7 +211,11 @@ URL so the QR code resolves. See the README.
 - **Privacy:** individual answers are personal data (GDPR). Never expose
   per-student answers to other students; teacher views show aggregates.
   Provide an export (CSV) of aggregates, and keep any per-student export
-  teacher-only and minimal. Two invariants already enforced and worth keeping:
+  teacher-only and minimal. The **Participants view is the only place in the
+  app that shows individuals** — it is teacher-only, restricted to the
+  session's own owner, hides names until explicitly revealed so opening it in
+  front of a class exposes nobody, and is labelled *do not project*. Keep
+  those properties if you touch it. Two further invariants worth keeping:
   the student `state` payload omits `is_correct` so the answer cannot be read
   out of the network tab, and a student is told only *their own* current
   choice (`my_choice_id`).
@@ -271,6 +281,9 @@ alembic upgrade head
 | `POST /api/sessions/{code}/rounds` | teacher | open a `pre`/`post` round |
 | `POST /api/sessions/{code}/rounds/{id}/close` | teacher | close the open round |
 | `GET /api/sessions/{code}/live` | teacher | answer count for the open round (no breakdown) |
+| `GET /api/sessions/{code}/participants` | teacher | how many joined (counts only, no names) |
+| `GET /api/sessions/{code}/participation` | teacher | **per-student** correctness (personal data) |
+| `GET /api/sessions/{code}/participation.csv` | teacher | the same as CSV |
 | `GET /api/sessions/{code}/questions/{id}/comparison` | teacher | pre vs post counts |
 | `GET /api/sessions/{code}/state` | student | full state snapshot (resync) |
 | `GET /api/sessions/{code}/events` | student | SSE state stream |
@@ -299,8 +312,6 @@ alembic upgrade head
       authorization-code + PKCE flow against login.kth.se, then call the same
       `get_or_create_user` + `set_session_cookie` path mock login already uses.
       Redirect URI will be `<PUBLIC_BASE_URL>/api/auth/callback`.
-- [ ] **CSV export** of aggregate results (and a minimal teacher-only
-      per-student participation export).
 - [ ] **Presenter polish:** a full-screen projection mode (large QR, large
       histogram, no chrome).
 - [ ] **Stronger attendance guard.** The open/closed window stops answering

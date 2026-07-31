@@ -20,7 +20,10 @@ import { SessionFeed } from './session-feed.service';
       <a routerLink="join" routerLinkActive="active">Join</a>
       <a routerLink="control" routerLinkActive="active">Control</a>
       <a routerLink="report" routerLinkActive="active">Report</a>
-      <span class="hint">each view has its own URL — open one in a second window to project it</span>
+      <a routerLink="people" routerLinkActive="active" class="private">
+        <span aria-hidden="true">🔒</span> Participants
+      </a>
+      <span class="hint">open a view in a second window to project it</span>
     </nav>
 
     @if (feed.error(); as e) {
@@ -36,6 +39,8 @@ import { SessionFeed } from './session-feed.service';
       .views a { padding: 0.4rem 0.9rem; border: 1px solid #ddd; border-radius: 6px;
                  text-decoration: none; color: inherit; }
       .views a.active { background: #2c7a51; color: #fff; border-color: #2c7a51; }
+      /* Flagged in the nav: unlike the others, this view must not be projected. */
+      .views a.private { border-style: dashed; }
       .hint { font-size: 0.8rem; color: #888; margin-left: auto; }
       .error { max-width: 46rem; margin: 1rem auto; padding: 0 1rem; color: #c0392b; }
     `,

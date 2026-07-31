@@ -6,6 +6,7 @@ whether a round is open — clients never decide based on their own clock.
 """
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import (
@@ -107,11 +108,20 @@ def record_participant(db: Session, session: QuizSession, user: User) -> None:
             SessionParticipant.user_id == user.id,
         )
     )
-    if participant is None:
-        db.add(SessionParticipant(session_id=session.id, user_id=user.id))
-    else:
+    if participant is not None:
         participant.last_seen_at = utcnow()
-    db.commit()
+        db.commit()
+        return
+
+    db.add(SessionParticipant(session_id=session.id, user_id=user.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        # A student's first load fetches the state and opens the SSE stream at
+        # almost the same moment, so both requests can find no row and try to
+        # insert one. Losing that race is not an error — the row exists — but
+        # letting it raise would 500 exactly when a student joins.
+        db.rollback()
 
 
 def participant_count(db: Session, session: QuizSession) -> int:
@@ -124,6 +134,74 @@ def participant_count(db: Session, session: QuizSession) -> int:
         )
         or 0
     )
+
+
+def participation_report(db: Session, session: QuizSession) -> list[dict]:
+    """Per-student answers for a session, for the teacher only.
+
+    This is personal data, unlike every other view in the app: it says who
+    answered what. It exists because the quiz is formative — the teacher wants
+    to see who is following along — so it reports correctness per question and
+    nothing else about the student beyond their username and name.
+
+    Rows are sorted by name so the table is stable between reloads.
+    """
+    rounds = sorted(session.rounds, key=lambda r: (r.question_id, r.phase.value))
+    correct_choice: dict[int, int | None] = {}
+    for round_ in rounds:
+        if round_.question_id not in correct_choice:
+            correct = next((c for c in round_.question.choices if c.is_correct), None)
+            correct_choice[round_.question_id] = correct.id if correct else None
+
+    # user_id -> question_id -> phase -> chosen choice id
+    chosen: dict[int, dict[int, dict[str, int]]] = {}
+    users: dict[int, User] = {}
+    for round_ in rounds:
+        for answer in round_.answers:
+            users[answer.user_id] = answer.user
+            chosen.setdefault(answer.user_id, {}).setdefault(round_.question_id, {})[
+                round_.phase.value
+            ] = answer.choice_id
+
+    # Anyone who opened the session counts, even if they never answered:
+    # "joined but silent" is exactly what a teacher wants to notice.
+    for participant in db.scalars(
+        select(SessionParticipant).where(SessionParticipant.session_id == session.id)
+    ):
+        users.setdefault(participant.user_id, participant.user)
+
+    question_ids = [q.id for q in session.quiz.questions]
+
+    rows: list[dict] = []
+    for user_id, user in users.items():
+        per_question = []
+        pre_correct = post_correct = answered = 0
+        for question_id in question_ids:
+            picks = chosen.get(user_id, {}).get(question_id, {})
+            right = correct_choice.get(question_id)
+
+            def verdict(phase: str) -> bool | None:
+                if phase not in picks:
+                    return None
+                return right is not None and picks[phase] == right
+
+            pre, post = verdict("pre"), verdict("post")
+            answered += sum(1 for v in (pre, post) if v is not None)
+            pre_correct += 1 if pre else 0
+            post_correct += 1 if post else 0
+            per_question.append({"question_id": question_id, "pre": pre, "post": post})
+        rows.append(
+            {
+                "username": user.username,
+                "display_name": user.display_name,
+                "answers": per_question,
+                "answered": answered,
+                "pre_correct": pre_correct,
+                "post_correct": post_correct,
+            }
+        )
+    rows.sort(key=lambda r: (r["display_name"].lower(), r["username"]))
+    return rows
 
 
 def round_histogram(db: Session, round_: Round) -> dict[int, int]:

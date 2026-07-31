@@ -129,6 +129,30 @@ class ParticipantsOut(BaseModel):
     connected: int
 
 
+class ParticipantAnswerOut(BaseModel):
+    """One student's verdict on one question. None means "did not answer"."""
+
+    question_id: int
+    pre: bool | None
+    post: bool | None
+
+
+class ParticipantRowOut(BaseModel):
+    """A student's participation. Personal data — teacher-only."""
+
+    username: str
+    display_name: str
+    answers: list[ParticipantAnswerOut]
+    answered: int
+    pre_correct: int
+    post_correct: int
+
+
+class ParticipationReportOut(BaseModel):
+    questions: list[QuestionTeacherOut]
+    rows: list[ParticipantRowOut]
+
+
 class LiveCountOut(BaseModel):
     """Progress of the open round: how many have answered, not what they chose."""
 
