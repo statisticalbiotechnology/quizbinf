@@ -5,10 +5,20 @@ and when answers are accepted. The server is the single source of truth for
 whether a round is open — clients never decide based on their own clock.
 """
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import Answer, Choice, Phase, Question, QuizSession, Round, User, utcnow
+from .models import (
+    Answer,
+    Choice,
+    Phase,
+    Question,
+    QuizSession,
+    Round,
+    SessionParticipant,
+    User,
+    utcnow,
+)
 
 
 class RuleViolation(Exception):
@@ -87,6 +97,33 @@ def submit_answer(db: Session, round_: Round, user: User, choice: Choice) -> Ans
     db.commit()
     db.refresh(answer)
     return answer
+
+
+def record_participant(db: Session, session: QuizSession, user: User) -> None:
+    """Note that `user` has the session open. Idempotent; safe to call often."""
+    participant = db.scalar(
+        select(SessionParticipant).where(
+            SessionParticipant.session_id == session.id,
+            SessionParticipant.user_id == user.id,
+        )
+    )
+    if participant is None:
+        db.add(SessionParticipant(session_id=session.id, user_id=user.id))
+    else:
+        participant.last_seen_at = utcnow()
+    db.commit()
+
+
+def participant_count(db: Session, session: QuizSession) -> int:
+    """How many distinct people have opened this session."""
+    return (
+        db.scalar(
+            select(func.count())
+            .select_from(SessionParticipant)
+            .where(SessionParticipant.session_id == session.id)
+        )
+        or 0
+    )
 
 
 def round_histogram(db: Session, round_: Round) -> dict[int, int]:

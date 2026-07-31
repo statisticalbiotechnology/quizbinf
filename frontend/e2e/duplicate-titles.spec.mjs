@@ -36,8 +36,11 @@ test('round controls appear when two quizzes share a title', async ({ browser })
   await expect(second.locator('ol li').first()).toContainText('Which aligns locally?');
 
   await second.getByRole('button', { name: 'Run session' }).click();
-  await page.waitForURL('**/teacher/session/**');
-  await page.waitForTimeout(2000);
+  await page.waitForURL('**/teacher/session/*/join');
+
+  // Round controls live on the Control view.
+  await page.getByRole('link', { name: 'Control', exact: true }).click();
+  await page.waitForURL('**/control');
 
   await expect(
     page.getByRole('button', { name: 'Open 1st bout (pre)' }),

@@ -52,6 +52,11 @@ export interface Histogram {
   total: number;
 }
 
+export interface Participants {
+  joined: number;
+  connected: number;
+}
+
 export interface LiveCount {
   open_round: Round | null;
   answered: number;

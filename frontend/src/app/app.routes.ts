@@ -20,10 +20,34 @@ export const routes: Routes = [
       import('./teacher/dashboard.component').then((m) => m.TeacherDashboardComponent),
   },
   {
+    // Three views of a running session, each with its own URL so one can be
+    // projected in a second window while the teacher drives from another.
     path: 'teacher/session/:code',
     canActivate: [teacherGuard],
     loadComponent: () =>
-      import('./teacher/session.component').then((m) => m.TeacherSessionComponent),
+      import('./teacher/session-shell.component').then((m) => m.TeacherSessionShellComponent),
+    children: [
+      { path: '', pathMatch: 'full', redirectTo: 'join' },
+      {
+        path: 'join',
+        loadComponent: () =>
+          import('./teacher/session-join.component').then((m) => m.TeacherSessionJoinComponent),
+      },
+      {
+        path: 'control',
+        loadComponent: () =>
+          import('./teacher/session-control.component').then(
+            (m) => m.TeacherSessionControlComponent,
+          ),
+      },
+      {
+        path: 'report',
+        loadComponent: () =>
+          import('./teacher/session-report.component').then(
+            (m) => m.TeacherSessionReportComponent,
+          ),
+      },
+    ],
   },
   { path: '', pathMatch: 'full', redirectTo: 'login' },
 ];

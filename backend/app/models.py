@@ -130,6 +130,28 @@ class Round(Base):
         return self.closed_at is None
 
 
+class SessionParticipant(Base):
+    """A student who has opened this session at least once.
+
+    Answers alone cannot tell the teacher how many people are in the room
+    before a round opens, which is what the projected join screen needs.
+    """
+
+    __tablename__ = "session_participants"
+    __table_args__ = (
+        UniqueConstraint("session_id", "user_id", name="uq_participant_per_session"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    session: Mapped[QuizSession] = relationship()
+    user: Mapped[User] = relationship()
+
+
 class Answer(Base):
     __tablename__ = "answers"
     __table_args__ = (

@@ -7,6 +7,7 @@ import {
   Comparison,
   Histogram,
   LiveCount,
+  Participants,
   Phase,
   Question,
   QuestionInput,
@@ -84,6 +85,14 @@ export class ApiService {
       this.opts,
     );
   }
+  /** How many students have joined the session — counts only, never names. */
+  participants(code: string): Observable<Participants> {
+    return this.http.get<Participants>(
+      `${API_BASE}/api/sessions/${code}/participants`,
+      this.opts,
+    );
+  }
+
   /** Answer count for the open round — count only, safe to project. */
   liveCount(code: string): Observable<LiveCount> {
     return this.http.get<LiveCount>(`${API_BASE}/api/sessions/${code}/live`, this.opts);

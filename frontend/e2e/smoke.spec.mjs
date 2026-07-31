@@ -60,7 +60,8 @@ test('teacher runs a session and a student follows it live', async ({ browser })
   ]);
 
   await quiz.getByRole('button', { name: 'Run session' }).click();
-  await teacher.waitForURL('**/teacher/session/**');
+  // Lands on the Join view: QR, join instructions and room count.
+  await teacher.waitForURL('**/teacher/session/*/join');
 
   // --- the projected QR code must actually render ---
   const qr = teacher.locator('img.qr');
@@ -84,6 +85,9 @@ test('teacher runs a session and a student follows it live', async ({ browser })
   const joinUrl = (await teacher.locator('code.url').textContent())?.trim() ?? '';
   expect(joinUrl).toMatch(/^https?:\/\/.+\/s\/[a-z0-9]+$/);
 
+  // Nobody has joined yet.
+  await expect(teacher.locator('.joined')).toContainText('0 students have joined');
+
   // --- a student joins and follows the session ---
   const studentCtx = await browser.newContext();
   const student = await studentCtx.newPage();
@@ -102,42 +106,60 @@ test('teacher runs a session and a student follows it live', async ({ browser })
   await expect(student.locator('.waiting')).toBeVisible();
   expect(new URL(student.url()).pathname).toBe(sessionPath);
 
-  // Teacher opens the first round; the student's page must update on its own.
+  // The join screen must show the room filling up.
+  await expect(teacher.locator('.joined')).toContainText('1 student has joined');
+
+  // --- Control view drives the rounds ---
+  const goto = (name) => teacher.getByRole('link', { name, exact: true }).click();
+  await goto('Control');
+  await teacher.waitForURL('**/control');
+
   await teacher.getByRole('button', { name: 'Open 1st bout (pre)' }).click();
   await expect(
     student.locator('.qtext'),
     'student page did not update over SSE without a reload',
   ).toContainText('Which aligns locally?');
 
-  // While the round is open the teacher sees a count, never that phase's
-  // split — the teacher screen is the projected one, and showing the vote
-  // before the discussion defeats the point of asking twice.
+  // Control shows a count, never the split.
   await student.getByRole('button', { name: 'Needleman-Wunsch' }).click();
   await expect(teacher.locator('.status')).toContainText('1 answer');
+
+  // The report view must not reveal the pre split while the pre round is open.
+  await goto('Report');
   await expect(
     teacher.locator('.bar.pre'),
     'pre distribution was visible while the pre round was still open',
   ).toHaveCount(0);
+  await expect(teacher.locator('.pending')).toContainText('results appear when you halt');
 
-  // Halt: now the distribution may be shown, one bar per choice.
+  await goto('Control');
   await teacher.getByRole('button', { name: 'Halt submission' }).click();
   await expect(teacher.locator('.status')).toContainText('CLOSED');
+
+  // Halted: the pre bars appear, one per choice.
+  await goto('Report');
   await expect(teacher.locator('.bar.pre')).toHaveCount(2);
 
   // --- second round, after the "discussion" ---
+  await goto('Control');
   await teacher.getByRole('button', { name: 'Open 2nd bout (post)' }).click();
   await expect(student.locator('.qtext')).toContainText('Which aligns locally?');
-  // The post split must stay hidden while the post round is open, even though
-  // the pre bars are now on screen.
-  await expect(teacher.locator('.bar.post')).toHaveCount(0);
+
+  await goto('Report');
+  await expect(
+    teacher.locator('.bar.post'),
+    'post distribution was visible while the post round was still open',
+  ).toHaveCount(0);
+  await expect(teacher.locator('.bar.pre')).toHaveCount(2);
 
   await student.getByRole('button', { name: 'Smith-Waterman' }).click();
+  await goto('Control');
   await expect(teacher.locator('.status')).toContainText('1 answer');
-
   await teacher.getByRole('button', { name: 'Halt submission' }).click();
   await expect(teacher.locator('.status')).toContainText('CLOSED');
 
-  // Both phases now have bars, ready to compare.
+  // Both phases side by side, ready to project.
+  await goto('Report');
   await expect(teacher.locator('.bar.pre')).toHaveCount(2);
   await expect(teacher.locator('.bar.post')).toHaveCount(2);
 

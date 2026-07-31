@@ -122,6 +122,13 @@ class ComparisonOut(BaseModel):
     post: dict[int, int] | None
 
 
+class ParticipantsOut(BaseModel):
+    """Room size for the projected join screen. Counts only — never names."""
+
+    joined: int
+    connected: int
+
+
 class LiveCountOut(BaseModel):
     """Progress of the open round: how many have answered, not what they chose."""
 

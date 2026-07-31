@@ -23,6 +23,7 @@ from ..schemas import (
     HistogramOut,
     LiveCountOut,
     OpenRoundIn,
+    ParticipantsOut,
     RoundOut,
     SessionOut,
     SessionState,
@@ -204,6 +205,27 @@ def histogram(
     )
 
 
+@router.get("/{code}/participants", response_model=ParticipantsOut)
+def participants(
+    code: str,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+) -> ParticipantsOut:
+    """How many students are in the session — a count, never a list of names.
+
+    `joined` is everyone who has opened it; `connected` is how many streams are
+    open right now, which drops when phones sleep, so `joined` is the number
+    worth projecting.
+    """
+    session = _session_by_code(db, code)
+    if session.quiz.owner_id != teacher.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your session")
+    return ParticipantsOut(
+        joined=service.participant_count(db, session),
+        connected=broadcaster.connected(session.code),
+    )
+
+
 @router.get("/{code}/live", response_model=LiveCountOut)
 def live_count(
     code: str,
@@ -251,7 +273,14 @@ def session_state(
     code: str, db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> SessionState:
     """Full state snapshot; clients call this on connect/reconnect to resync."""
-    return _state(db, _session_by_code(db, code), user)
+    session = _session_by_code(db, code)
+    # Opening the session is what "joining" means — the projected join screen
+    # shows this count so the teacher can see the room filling up before any
+    # round is open. The teacher running it is not a member of the room, and
+    # their own views poll this endpoint, so exclude the owner.
+    if user.id != session.quiz.owner_id:
+        service.record_participant(db, session, user)
+    return _state(db, session, user)
 
 
 @router.post("/{code}/answers")
@@ -289,6 +318,8 @@ async def events(
     """
     session = _session_by_code(db, code)
     session_code = session.code
+    if user.id != session.quiz.owner_id:
+        service.record_participant(db, session, user)
 
     async def stream():
         queue = broadcaster.subscribe(session_code)
