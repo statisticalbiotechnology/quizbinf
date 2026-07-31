@@ -21,7 +21,8 @@ import { SessionFeed } from './session-feed.service';
       @for (q of feed.questions(); track q.id) {
         @if (feed.comparisons()[q.id]; as c) {
           <section class="q">
-            <p class="qtext">{{ q.position + 1 }}. {{ q.text }}</p>
+            <div class="qtext"><span class="num">{{ q.position + 1 }}.</span>
+            <span [innerHTML]="q.text_html"></span></div>
 
             @if (!shown(q)) {
               <p class="pending">
@@ -74,6 +75,8 @@ import { SessionFeed } from './session-feed.service';
       .wrap { max-width: 46rem; margin: 1.5rem auto; padding: 1rem; }
       .q { border-top: 1px solid #eee; padding: 1rem 0; }
       .qtext { font-weight: 600; font-size: 1.1rem; }
+      .qtext img { max-width: 22rem; height: auto; border-radius: 6px; }
+      .qtext :is(p, ul, ol) { display: inline; margin: 0; }
       .pending { color: #777; font-style: italic; }
       .row { display: flex; align-items: center; gap: 0.6rem; margin: 0.5rem 0; }
       .label { width: 14rem; }

@@ -8,7 +8,7 @@ from starlette.responses import FileResponse
 
 from .config import VOLUME_ENV_FILE, get_settings
 from .db import Base, engine
-from .routers import auth, quizzes, sessions
+from .routers import auth, images, markdown, quizzes, sessions
 
 log = logging.getLogger("quizbinf")
 
@@ -85,6 +85,8 @@ if settings.environment != "production":
     )
 
 app.include_router(auth.router)
+app.include_router(images.router)
+app.include_router(markdown.router)
 app.include_router(quizzes.router)
 app.include_router(sessions.router)
 
@@ -94,13 +96,33 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+def static_file_for(full_path: str) -> Path | None:
+    """The built asset a request refers to, or None to fall back to the SPA.
+
+    Resolves the path and requires the result to stay inside the static
+    directory. Without that check a request whose decoded path contains ".."
+    escapes it — `STATIC_DIR / "../../home/data/session_secret"` is a real
+    file, and serving it would let anyone forge a teacher cookie.
+    """
+    if not full_path:
+        return None
+    root = STATIC_DIR.resolve()
+    try:
+        candidate = (root / full_path).resolve()
+    except (OSError, ValueError):
+        return None
+    if root not in candidate.parents:
+        return None
+    return candidate if candidate.is_file() else None
+
+
 if STATIC_DIR.is_dir():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa(full_path: str) -> FileResponse:
         # Serve real files (JS/CSS bundles) directly, everything else gets
         # index.html so Angular's router handles /s/<code> etc.
-        candidate = STATIC_DIR / full_path
-        if full_path and candidate.is_file():
-            return FileResponse(candidate)
+        asset = static_file_for(full_path)
+        if asset is not None:
+            return FileResponse(asset)
         return FileResponse(STATIC_DIR / "index.html")

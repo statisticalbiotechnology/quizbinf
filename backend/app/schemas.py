@@ -1,7 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
+from .markdown import render as render_markdown
 from .models import Phase, Role
 
 
@@ -56,6 +57,16 @@ class QuestionOut(BaseModel):
     text: str
     image_url: str | None
     choices: list[ChoiceOut]
+
+    @computed_field
+    @property
+    def text_html(self) -> str:
+        """`text` rendered from Markdown and sanitised, ready to display.
+
+        Sent alongside the source so a client can show either; the authoring
+        form edits `text`, everything that displays a question uses this.
+        """
+        return render_markdown(self.text)
 
 
 class QuestionTeacherOut(QuestionOut):

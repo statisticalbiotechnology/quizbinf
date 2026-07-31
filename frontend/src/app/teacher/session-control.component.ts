@@ -37,7 +37,8 @@ const POLL_MS = 2000;
 
       @for (q of feed.questions(); track q.id) {
         <section class="q">
-          <p class="qtext">{{ q.position + 1 }}. {{ q.text }}</p>
+          <div class="qtext"><span class="num">{{ q.position + 1 }}.</span>
+            <span [innerHTML]="q.text_html"></span></div>
           <div class="controls">
             <button (click)="open(q, 'pre')" [disabled]="feed.anyOpen() || ran(q, 'pre')">
               {{ ran(q, 'pre') ? '✓ 1st bout done' : 'Open 1st bout (pre)' }}
@@ -45,6 +46,11 @@ const POLL_MS = 2000;
             <button (click)="open(q, 'post')" [disabled]="feed.anyOpen() || ran(q, 'post')">
               {{ ran(q, 'post') ? '✓ 2nd bout done' : 'Open 2nd bout (post)' }}
             </button>
+            @if (hasRun(q)) {
+              <button class="reset" (click)="reset(q)" title="Discard this question's answers and run it again">
+                ↺ Reset
+              </button>
+            }
           </div>
           @if (feed.openRoundFor(q)) {
             <p class="note">Results stay hidden until you halt this round.</p>
@@ -66,7 +72,10 @@ const POLL_MS = 2000;
       .halt { margin-left: 0.8rem; background: #c0392b; color: #fff; border-color: #a33; }
       .q { border-top: 1px solid #eee; padding: 0.9rem 0; }
       .qtext { font-weight: 600; margin: 0 0 0.5rem; }
-      .controls { display: flex; gap: 0.5rem; }
+      .qtext img { max-width: 22rem; height: auto; border-radius: 6px; }
+      .qtext :is(p, ul, ol) { display: inline; margin: 0; }
+      .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+      .reset { margin-left: auto; color: #8a2b20; border-color: #e6b8b2; }
       .note { font-size: 0.85rem; color: #777; font-style: italic; }
       .empty { color: #777; }
       .error { color: #c0392b; }
@@ -89,6 +98,34 @@ export class TeacherSessionControlComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     if (this.timer) clearInterval(this.timer);
+  }
+
+  /** Whether anything has been run for this question, so a reset makes sense. */
+  hasRun(q: Question): boolean {
+    return this.ran(q, 'pre') || this.ran(q, 'post') || !!this.feed.openRoundFor(q);
+  }
+
+  /**
+   * Throw away this question's rounds so both bouts can be run again.
+   *
+   * Deletes the answers with them, so it asks first — useful when rehearsing,
+   * destructive during a real lecture.
+   */
+  reset(q: Question): void {
+    const ok = confirm(
+      'Reset this question?\n\nThis deletes the answers students have already ' +
+        'given for it in this session, and lets you run both bouts again.',
+    );
+    if (!ok) return;
+    this.actionError.set('');
+    this.api.resetQuestion(this.feed.code(), q.id).subscribe({
+      next: () => {
+        this.answered.set(0);
+        this.feed.refreshState();
+        this.feed.refreshComparisons();
+      },
+      error: () => this.actionError.set('Could not reset that question.'),
+    });
   }
 
   /** A phase that has already been run cannot be opened again. */
