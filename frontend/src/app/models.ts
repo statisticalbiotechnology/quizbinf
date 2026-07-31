@@ -57,6 +57,26 @@ export interface Participants {
   connected: number;
 }
 
+export interface ParticipantAnswer {
+  question_id: number;
+  pre: boolean | null;
+  post: boolean | null;
+}
+
+export interface ParticipantRow {
+  username: string;
+  display_name: string;
+  answers: ParticipantAnswer[];
+  answered: number;
+  pre_correct: number;
+  post_correct: number;
+}
+
+export interface ParticipationReport {
+  questions: Question[];
+  rows: ParticipantRow[];
+}
+
 export interface LiveCount {
   open_round: Round | null;
   answered: number;

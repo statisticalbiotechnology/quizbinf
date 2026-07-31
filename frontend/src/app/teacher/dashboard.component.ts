@@ -49,13 +49,19 @@ interface ChoiceDraft {
               <textarea [(ngModel)]="draft.text" name="qtext" placeholder="Question text"></textarea>
               @for (c of draft.choices; track $index) {
                 <div class="choice-row">
-                  <input type="radio" name="correct" [checked]="c.is_correct"
-                         (change)="setCorrect($index)" title="Correct answer" />
+                  <label class="mark" [class.on]="c.is_correct">
+                    <input type="radio" name="correct" [checked]="c.is_correct"
+                           (change)="setCorrect($index)" />
+                    <span>correct</span>
+                  </label>
                   <input [(ngModel)]="c.text" [name]="'c' + $index" placeholder="Choice text" />
                 </div>
               }
               <button type="button" (click)="addChoiceRow()">+ choice</button>
               <button (click)="addQuestion(quiz)" [disabled]="!questionValid()">Save question</button>
+              @if (!questionValid()) {
+                <p class="hint">{{ whyInvalid() }}</p>
+              }
               @if (formError) {
                 <p class="error">{{ formError }}</p>
               }
@@ -72,6 +78,11 @@ interface ChoiceDraft {
       header { display: flex; justify-content: space-between; align-items: center; }
       li.correct { font-weight: 600; color: #2c7; }
       .choice-row { display: flex; gap: 0.5rem; align-items: center; margin: 0.3rem 0; }
+      .mark { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer;
+              border: 1px solid var(--border); border-radius: 6px; padding: 0.25rem 0.5rem;
+              font-size: 0.85rem; color: #777; white-space: nowrap; }
+      .mark.on { border-color: #2c7a51; background: #eafaf1; color: #2c7a51; font-weight: 600; }
+      .hint { font-size: 0.85rem; color: #777; margin: 0.3rem 0 0; }
       textarea { width: 100%; min-height: 3rem; }
       .error { color: #c0392b; }
     `,
@@ -97,7 +108,7 @@ export class TeacherDashboardComponent implements OnInit {
     return {
       text: '',
       choices: [
-        { text: '', is_correct: true },
+        { text: '', is_correct: false },
         { text: '', is_correct: false },
       ],
     };
@@ -117,6 +128,17 @@ export class TeacherDashboardComponent implements OnInit {
 
   setCorrect(index: number): void {
     this.draft.choices.forEach((c, i) => (c.is_correct = i === index));
+  }
+
+  /** Why the question cannot be saved yet, in the teacher's terms. */
+  whyInvalid(): string {
+    if (!this.draft.text.trim()) return 'Write the question text.';
+    const filled = this.draft.choices.filter((c) => c.text.trim());
+    if (filled.length < 2) return 'Add at least two choices.';
+    if (!filled.some((c) => c.is_correct)) {
+      return 'Mark which choice is correct.';
+    }
+    return '';
   }
 
   questionValid(): boolean {

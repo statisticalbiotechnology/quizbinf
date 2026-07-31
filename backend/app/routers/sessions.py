@@ -1,4 +1,5 @@
 import asyncio
+import csv
 import io
 import json
 
@@ -24,6 +25,7 @@ from ..schemas import (
     LiveCountOut,
     OpenRoundIn,
     ParticipantsOut,
+    ParticipationReportOut,
     RoundOut,
     SessionOut,
     SessionState,
@@ -223,6 +225,71 @@ def participants(
     return ParticipantsOut(
         joined=service.participant_count(db, session),
         connected=broadcaster.connected(session.code),
+    )
+
+
+def _owned_session(db: Session, code: str, teacher: User) -> QuizSession:
+    session = _session_by_code(db, code)
+    if session.quiz.owner_id != teacher.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your session")
+    return session
+
+
+@router.get("/{code}/participation", response_model=ParticipationReportOut)
+def participation(
+    code: str,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+) -> ParticipationReportOut:
+    """Who answered what, per student — the one personal-data view in the app.
+
+    Teacher-only, and only for their own session. Intended for formative use:
+    seeing who is following along, not grading.
+    """
+    session = _owned_session(db, code, teacher)
+    return ParticipationReportOut(
+        questions=session.quiz.questions,
+        rows=service.participation_report(db, session),
+    )
+
+
+@router.get("/{code}/participation.csv", include_in_schema=False)
+def participation_csv(
+    code: str,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+) -> Response:
+    """The same report as CSV, for keeping a participation record."""
+    session = _owned_session(db, code, teacher)
+    questions = session.quiz.questions
+    rows = service.participation_report(db, session)
+
+    def mark(value: bool | None) -> str:
+        if value is None:
+            return "-"
+        return "correct" if value else "wrong"
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    header = ["username", "name"]
+    for i, _ in enumerate(questions, start=1):
+        header += [f"q{i}_pre", f"q{i}_post"]
+    header += ["answered", "pre_correct", "post_correct"]
+    writer.writerow(header)
+    for row in rows:
+        line = [row["username"], row["display_name"]]
+        for answer in row["answers"]:
+            line += [mark(answer["pre"]), mark(answer["post"])]
+        line += [row["answered"], row["pre_correct"], row["post_correct"]]
+        writer.writerow(line)
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="quizbinf-{session.code}.csv"',
+            "Cache-Control": "no-store",
+        },
     )
 
 
