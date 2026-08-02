@@ -63,6 +63,17 @@ test('teacher runs a session and a student follows it live', async ({ browser })
   // Lands on the Join view: QR, join instructions and room count.
   await teacher.waitForURL('**/teacher/session/*/join');
 
+  // Reloading a teacher URL must not bounce to login, and must not leave an
+  // error banner behind: the guard used to decide before the current user was
+  // known, and a cold load is what a bookmark or a second window does.
+  await teacher.reload();
+  await teacher.waitForURL('**/teacher/session/*/join');
+  await expect(teacher.locator('img.qr')).toBeVisible();
+  await expect(
+    teacher.locator('.error'),
+    'reloading a teacher view showed an error',
+  ).toHaveCount(0);
+
   // --- the projected QR code must actually render ---
   const qr = teacher.locator('img.qr');
   await expect(qr).toBeVisible();
