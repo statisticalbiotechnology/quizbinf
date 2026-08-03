@@ -11,9 +11,12 @@ import { AuthService } from './auth.service';
  *
  * Without this a rejected cookie surfaces as whatever each view makes of a
  * failed request — "Session not found.", a broken QR image — while the page
- * still looks logged in, which is impossible to act on. A cookie can be
- * rejected because it expired, or because the server's session secret changed
- * (which happens on every restart when no writable volume is mounted).
+ * still looks logged in, which is impossible to act on.
+ *
+ * The server renews a cookie that is in use, so this should now only be
+ * reached after a real week away — or when the cookie cannot be verified at
+ * all. It distinguishes the two ("Session expired" vs "Invalid session");
+ * both mean log in again here.
  */
 export const authErrorInterceptor: HttpInterceptorFn = (req, next) => {
   const router = inject(Router);

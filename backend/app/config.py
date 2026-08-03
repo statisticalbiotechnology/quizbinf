@@ -1,12 +1,50 @@
+import logging
 import os
 import secrets
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+log = logging.getLogger("quizbinf")
+
 # Placeholder that must never be used to sign real cookies.
 DEV_SECRET = "dev-only-secret"
+
+
+def _read_secret(path: Path) -> str | None:
+    try:
+        return path.read_text().strip() or None
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        # Typically a file left by an earlier image that ran as another uid.
+        log.error("cannot read the session secret at %s: %s", path, exc)
+        return None
+
+
+def _create_secret(path: Path) -> str | None:
+    """Create the secret file, or adopt one another process created first.
+
+    O_EXCL makes exactly one caller the creator. The obvious alternative —
+    check whether the file exists, then write it — is wrong in two ways that
+    both end in mismatched cookies: several callers starting together each
+    generate their own and the last write wins, and a plain write truncates,
+    so a concurrent reader sees an empty file and generates yet another.
+    """
+    generated = secrets.token_urlsafe(48)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        # Lost the race, and that is fine: the winner's secret is the one
+        # every other process will read.
+        return _read_secret(path)
+    except OSError as exc:
+        log.error("cannot create a session secret at %s: %s", path, exc)
+        return None
+    with os.fdopen(fd, "w") as fh:
+        fh.write(generated)
+    return generated
 
 # SciLifeLab Serve offers no way to set environment variables on an app, so
 # settings are also read from a file on the mounted persistent volume. Upload
@@ -93,34 +131,39 @@ class Settings(BaseSettings):
                 return f"sqlite:///{db_file}"
         return "sqlite:///./quizbinf.db"
 
-    @property
+    @cached_property
     def resolved_session_secret(self) -> str:
         """Explicit setting, else a random secret persisted on the volume.
 
         The image is public, so a hardcoded default would let anyone forge a
         session cookie. Generating once and storing it next to the database
         keeps logins valid across restarts without any configuration.
+
+        Cached, because every request verifies a cookie against this: as a
+        plain property it was recomputed per request, so anything that made
+        two evaluations disagree logged people out between one request and
+        the next.
         """
         if self.session_secret and self.session_secret != DEV_SECRET:
             return self.session_secret
         data = self._writable_data_dir()
         if data is not None:
             secret_file = data / "session_secret"
-            try:
-                if secret_file.exists():
-                    stored = secret_file.read_text().strip()
-                    if stored:
-                        return stored
-                generated = secrets.token_urlsafe(48)
-                secret_file.write_text(generated)
-                secret_file.chmod(0o600)
-                return generated
-            except OSError:
-                pass
+            stored = _read_secret(secret_file) or _create_secret(secret_file)
+            if stored:
+                return stored
         if self.session_secret:
             return self.session_secret
-        # No persistence available: random per process. Sessions do not
-        # survive a restart, which is safer than a known constant.
+        # Nothing readable and nothing writable. A per-process random secret
+        # is safer than a known constant, but it rejects every cookie issued
+        # by any other process — so say so rather than failing as a 401.
+        log.error(
+            "no session secret could be read or stored under %s: signing cookies "
+            "with a per-process random value. Logins will break on restart and "
+            "whenever more than one worker runs. Set SESSION_SECRET in %s.",
+            self.data_dir,
+            VOLUME_ENV_FILE,
+        )
         return secrets.token_urlsafe(48)
 
 

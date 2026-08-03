@@ -1,11 +1,15 @@
+import hashlib
 import logging
+import re
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse
 
+from .auth import RENEW_FLAG, set_session_cookie
 from .config import VOLUME_ENV_FILE, get_settings
 from .db import Base, engine
 from .routers import auth, images, markdown, quizzes, sessions
@@ -38,6 +42,11 @@ def log_startup_summary() -> None:
         )
     else:
         log.info("data dir %s is writable", data)
+
+    # A truncated hash, never the secret. Two instances printing different
+    # values will reject each other's cookies.
+    digest = hashlib.sha256(s.resolved_session_secret.encode()).hexdigest()[:8]
+    log.info("instance %s signing cookies with secret %s…", INSTANCE_ID, digest)
 
     url = s.resolved_database_url
     # Only the scheme and, for SQLite, the path — a Postgres URL holds a password.
@@ -84,6 +93,24 @@ if settings.environment != "production":
         allow_headers=["*"],
     )
 
+@app.middleware("http")
+async def renew_session_cookie(request: Request, call_next):
+    """Slide the session window forward on a request that used the cookie.
+
+    Applied here rather than in the `current_user` dependency because FastAPI
+    merges a dependency's response headers only when the endpoint returns data
+    to serialise (routing.py: a returned Response is used as-is). An endpoint
+    like qr.svg returns a FileResponse, so a cookie set from the dependency
+    would be dropped without a trace. Middleware sees the final response
+    whatever produced it.
+    """
+    response = await call_next(request)
+    username = getattr(request.state, RENEW_FLAG, None)
+    if username:
+        set_session_cookie(response, username, get_settings())
+    return response
+
+
 app.include_router(auth.router)
 app.include_router(images.router)
 app.include_router(markdown.router)
@@ -91,21 +118,55 @@ app.include_router(quizzes.router)
 app.include_router(sessions.router)
 
 
+# Identifies this process across requests. Two different values coming back
+# from the same URL mean more than one instance is serving it.
+INSTANCE_ID = secrets.token_hex(4)
+
+
 @app.get("/api/health")
 def health() -> dict:
-    """Liveness, plus whether anything written here will survive a restart.
+    """Liveness, plus the two things that silently break logins.
 
-    Reported because non-persistent storage does not announce itself: the app
-    runs, but the database is thrown away on every restart and the session
-    secret is regenerated, which invalidates everyone's cookie. That surfaces
-    as unrelated-looking failures — vanished sessions, "invalid session" —
-    so it is worth being able to check directly.
+    Neither announces itself. Non-persistent storage means the database is
+    thrown away on every restart; a session secret that differs between
+    processes means a cookie issued by one is rejected by the next, which
+    shows up as an unexplained 401 rather than as anything about secrets.
+
+    `secret` is a truncated hash, never the secret: enough to compare two
+    instances, useless for forging a cookie. Repeat the request a few times —
+    if `instance` or `secret` changes between calls, requests are being served
+    by processes that do not agree, and logins will fail at random.
     """
     settings = get_settings()
+    fingerprint = hashlib.sha256(settings.resolved_session_secret.encode()).hexdigest()
     return {
         "status": "ok",
         "storage": "persistent" if settings._writable_data_dir() else "ephemeral",
+        "instance": INSTANCE_ID,
+        "secret": fingerprint[:8],
     }
+
+
+def looks_like_asset(full_path: str) -> bool:
+    """Whether a path is asking for a build artefact rather than an SPA route.
+
+    Angular's routes never contain a dot ("/s/<code>", "/teacher/session/…"),
+    while every emitted artefact has an extension, so the last segment having
+    one separates them.
+    """
+    return "." in full_path.rsplit("/", 1)[-1]
+
+
+# Angular fingerprints its output ("main-3WBHVWMP.js"). A fingerprinted name
+# describes exactly one build, so it can be cached forever; anything else may
+# be replaced in place by the next deploy and has to be revalidated.
+_FINGERPRINTED = re.compile(r"-[A-Z0-9]{8,}\.[a-z0-9]+$")
+
+
+def cache_control_for(path: Path) -> str:
+    if _FINGERPRINTED.search(path.name):
+        return "public, max-age=31536000, immutable"
+    return "no-cache"
 
 
 def static_file_for(full_path: str) -> Path | None:
@@ -136,5 +197,17 @@ if STATIC_DIR.is_dir():
         # index.html so Angular's router handles /s/<code> etc.
         asset = static_file_for(full_path)
         if asset is not None:
-            return FileResponse(asset)
-        return FileResponse(STATIC_DIR / "index.html")
+            return FileResponse(asset, headers={"Cache-Control": cache_control_for(asset)})
+
+        # A missing artefact must 404 rather than fall through to the SPA.
+        # Answering a ".js" URL with index.html produces "Expected a
+        # JavaScript-or-Wasm module script but the server responded with a MIME
+        # type of text/html" instead of a plain 404, and the browser may then
+        # cache that HTML under the script's URL.
+        if looks_like_asset(full_path):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "No such file")
+
+        # index.html names the fingerprinted bundles of one specific build, so
+        # a cached copy outlives the deploy that produced it and asks for chunks
+        # that no longer exist. It must be revalidated every time.
+        return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
