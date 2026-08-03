@@ -142,6 +142,16 @@ quizbinf/
   headers only when the endpoint returns data to serialise, so a cookie set
   there is silently dropped by anything returning a `Response` directly —
   `qr.svg`, the SPA fallback. `tests/test_session_cookie.py` pins that case.
+- **The session secret must be identical in every process.** It is generated
+  once and stored at `<data>/session_secret`, created with `O_EXCL` so that
+  concurrent cold starts adopt one value instead of each writing its own, and
+  cached per process. Both properties matter: a check-then-write race produced
+  six different secrets from one cold start, and as a plain property it was
+  re-evaluated on *every request*, so a cookie handed out by one request was
+  rejected by the next. `GET /api/health` reports `instance` and a truncated
+  hash of the secret — if either changes between two calls to the same URL,
+  processes disagree and logins fail at random. Setting `SESSION_SECRET`
+  explicitly sidesteps all of it.
 - **Why a cookie was rejected is worth distinguishing.** `SignatureExpired`
   subclasses `BadSignature`, so catching only the latter reports every routine
   expiry as a forged cookie — which cost real debugging time. Expiry says

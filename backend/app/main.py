@@ -1,5 +1,7 @@
+import hashlib
 import logging
 import re
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -40,6 +42,11 @@ def log_startup_summary() -> None:
         )
     else:
         log.info("data dir %s is writable", data)
+
+    # A truncated hash, never the secret. Two instances printing different
+    # values will reject each other's cookies.
+    digest = hashlib.sha256(s.resolved_session_secret.encode()).hexdigest()[:8]
+    log.info("instance %s signing cookies with secret %s…", INSTANCE_ID, digest)
 
     url = s.resolved_database_url
     # Only the scheme and, for SQLite, the path — a Postgres URL holds a password.
@@ -111,20 +118,32 @@ app.include_router(quizzes.router)
 app.include_router(sessions.router)
 
 
+# Identifies this process across requests. Two different values coming back
+# from the same URL mean more than one instance is serving it.
+INSTANCE_ID = secrets.token_hex(4)
+
+
 @app.get("/api/health")
 def health() -> dict:
-    """Liveness, plus whether anything written here will survive a restart.
+    """Liveness, plus the two things that silently break logins.
 
-    Reported because non-persistent storage does not announce itself: the app
-    runs, but the database is thrown away on every restart and the session
-    secret is regenerated, which invalidates everyone's cookie. That surfaces
-    as unrelated-looking failures — vanished sessions, "invalid session" —
-    so it is worth being able to check directly.
+    Neither announces itself. Non-persistent storage means the database is
+    thrown away on every restart; a session secret that differs between
+    processes means a cookie issued by one is rejected by the next, which
+    shows up as an unexplained 401 rather than as anything about secrets.
+
+    `secret` is a truncated hash, never the secret: enough to compare two
+    instances, useless for forging a cookie. Repeat the request a few times —
+    if `instance` or `secret` changes between calls, requests are being served
+    by processes that do not agree, and logins will fail at random.
     """
     settings = get_settings()
+    fingerprint = hashlib.sha256(settings.resolved_session_secret.encode()).hexdigest()
     return {
         "status": "ok",
         "storage": "persistent" if settings._writable_data_dir() else "ephemeral",
+        "instance": INSTANCE_ID,
+        "secret": fingerprint[:8],
     }
 
 
