@@ -93,7 +93,19 @@ app.include_router(sessions.router)
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok"}
+    """Liveness, plus whether anything written here will survive a restart.
+
+    Reported because non-persistent storage does not announce itself: the app
+    runs, but the database is thrown away on every restart and the session
+    secret is regenerated, which invalidates everyone's cookie. That surfaces
+    as unrelated-looking failures — vanished sessions, "invalid session" —
+    so it is worth being able to check directly.
+    """
+    settings = get_settings()
+    return {
+        "status": "ok",
+        "storage": "persistent" if settings._writable_data_dir() else "ephemeral",
+    }
 
 
 def static_file_for(full_path: str) -> Path | None:
