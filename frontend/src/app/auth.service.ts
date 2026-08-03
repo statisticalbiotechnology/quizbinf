@@ -52,8 +52,8 @@ export class AuthService {
     return this.api.mockLogin(username, displayName).pipe(tap((u) => this.user.set(u)));
   }
 
-  logout(): void {
-    this.api.logout().subscribe(() => this.user.set(null));
+  logout(): Observable<unknown> {
+    return this.api.logout().pipe(tap(() => this.forgetUser()));
   }
 
   isTeacher(): boolean {
