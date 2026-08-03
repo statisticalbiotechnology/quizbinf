@@ -13,10 +13,10 @@ import { AuthService } from './auth.service';
  * failed request — "Session not found.", a broken QR image — while the page
  * still looks logged in, which is impossible to act on.
  *
- * The common case is the plainest one: the cookie is older than
- * SESSION_MAX_AGE, so a teacher who logged in yesterday finds every request
- * failing today. The server distinguishes that ("Session expired") from a
- * cookie it cannot verify ("Invalid session"); both mean log in again here.
+ * The server renews a cookie that is in use, so this should now only be
+ * reached after a real week away — or when the cookie cannot be verified at
+ * all. It distinguishes the two ("Session expired" vs "Invalid session");
+ * both mean log in again here.
  */
 export const authErrorInterceptor: HttpInterceptorFn = (req, next) => {
   const router = inject(Router);

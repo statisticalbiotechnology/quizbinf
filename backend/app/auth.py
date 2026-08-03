@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import Depends, HTTPException, Request, Response, status
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
@@ -8,7 +10,23 @@ from .db import get_db
 from .models import Role, User
 
 COOKIE_NAME = "quizbinf_session"
-SESSION_MAX_AGE = 12 * 3600  # one lecture day
+
+# How long a cookie stays valid without being used. Renewal below means this
+# is an *idle* timeout: someone who keeps using the app is never signed out,
+# so a session cannot lapse in the middle of a lecture.
+SESSION_MAX_AGE = 7 * 24 * 3600  # a week away from the app
+
+# Re-issue a cookie once it is older than this. Well short of the window, so
+# an active session is always far from expiring, and rare enough that it costs
+# one Set-Cookie per client per day rather than one per request.
+SESSION_RENEW_AFTER = 24 * 3600
+
+# Where current_user records that the cookie it accepted is due for renewal.
+# A dependency cannot set the cookie itself: FastAPI merges a dependency's
+# response headers only when the endpoint returns data to serialise, so
+# anything returning a Response directly — qr.svg, the SPA fallback — would
+# silently drop it. The middleware in main.py applies this to every response.
+RENEW_FLAG = "renew_session_for"
 
 
 def _serializer(settings: Settings) -> URLSafeTimedSerializer:
@@ -56,7 +74,9 @@ def current_user(
     if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not logged in")
     try:
-        data = _serializer(settings).loads(token, max_age=SESSION_MAX_AGE)
+        data, issued_at = _serializer(settings).loads(
+            token, max_age=SESSION_MAX_AGE, return_timestamp=True
+        )
     except SignatureExpired:
         # Ordinary and expected after SESSION_MAX_AGE. Reported separately
         # because SignatureExpired subclasses BadSignature, so folding the two
@@ -69,6 +89,11 @@ def current_user(
     user = db.scalar(select(User).where(User.username == data["username"]))
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user")
+
+    # Push the expiry back while the session is in use, so the window measures
+    # time away from the app rather than time since logging in.
+    if datetime.now(timezone.utc) - issued_at > timedelta(seconds=SESSION_RENEW_AFTER):
+        setattr(request.state, RENEW_FLAG, user.username)
     return user
 
 

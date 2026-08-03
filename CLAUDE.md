@@ -134,6 +134,20 @@ quizbinf/
 - For local development there must be a **mock login mode** (env-flag
   controlled, hard-disabled in production builds) so the app can be developed
   without reaching KTH's IdP.
+- **The session window is an *idle* timeout, and it slides.** A cookie lasts a
+  week unused (`SESSION_MAX_AGE`), and any request that uses it re-issues it
+  once it is older than a day (`SESSION_RENEW_AFTER`), so a session cannot
+  lapse mid-lecture. The renewal lives in a middleware in `app/main.py`, not
+  in the `current_user` dependency: FastAPI merges a dependency's response
+  headers only when the endpoint returns data to serialise, so a cookie set
+  there is silently dropped by anything returning a `Response` directly —
+  `qr.svg`, the SPA fallback. `tests/test_session_cookie.py` pins that case.
+- **Why a cookie was rejected is worth distinguishing.** `SignatureExpired`
+  subclasses `BadSignature`, so catching only the latter reports every routine
+  expiry as a forged cookie — which cost real debugging time. Expiry says
+  *Session expired*; *Invalid session* means specifically that the server
+  could not verify an in-date cookie, i.e. the session secret is not what
+  signed it.
 
 ## Deployment: SciLifeLab Serve
 

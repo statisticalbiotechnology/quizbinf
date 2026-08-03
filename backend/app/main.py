@@ -3,10 +3,11 @@ import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse
 
+from .auth import RENEW_FLAG, set_session_cookie
 from .config import VOLUME_ENV_FILE, get_settings
 from .db import Base, engine
 from .routers import auth, images, markdown, quizzes, sessions
@@ -84,6 +85,24 @@ if settings.environment != "production":
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+@app.middleware("http")
+async def renew_session_cookie(request: Request, call_next):
+    """Slide the session window forward on a request that used the cookie.
+
+    Applied here rather than in the `current_user` dependency because FastAPI
+    merges a dependency's response headers only when the endpoint returns data
+    to serialise (routing.py: a returned Response is used as-is). An endpoint
+    like qr.svg returns a FileResponse, so a cookie set from the dependency
+    would be dropped without a trace. Middleware sees the final response
+    whatever produced it.
+    """
+    response = await call_next(request)
+    username = getattr(request.state, RENEW_FLAG, None)
+    if username:
+        set_session_cookie(response, username, get_settings())
+    return response
+
 
 app.include_router(auth.router)
 app.include_router(images.router)
