@@ -1,5 +1,5 @@
 from fastapi import Depends, HTTPException, Request, Response, status
-from itsdangerous import BadSignature, URLSafeTimedSerializer
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -57,7 +57,14 @@ def current_user(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not logged in")
     try:
         data = _serializer(settings).loads(token, max_age=SESSION_MAX_AGE)
+    except SignatureExpired:
+        # Ordinary and expected after SESSION_MAX_AGE. Reported separately
+        # because SignatureExpired subclasses BadSignature, so folding the two
+        # together makes a routine expiry look like a forged cookie — which
+        # sent us hunting a session-secret bug that did not exist.
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired")
     except BadSignature:
+        # Signed with a different secret, or tampered with.
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid session")
     user = db.scalar(select(User).where(User.username == data["username"]))
     if user is None:
