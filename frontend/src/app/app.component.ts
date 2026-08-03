@@ -1,5 +1,5 @@
 import { Component, OnInit } from '@angular/core';
-import { RouterLink, RouterOutlet } from '@angular/router';
+import { Router, RouterLink, RouterOutlet } from '@angular/router';
 
 import { AuthService } from './auth.service';
 
@@ -34,7 +34,7 @@ import { AuthService } from './auth.service';
   ],
 })
 export class AppComponent implements OnInit {
-  constructor(public auth: AuthService) {}
+  constructor(public auth: AuthService, private router: Router) {}
 
   ngOnInit(): void {
     this.auth.init();
@@ -42,6 +42,11 @@ export class AppComponent implements OnInit {
 
   logout(ev: Event): void {
     ev.preventDefault();
-    this.auth.logout();
+    // Leave the page as well as the session: staying on a teacher view after
+    // signing out leaves it polling endpoints that now answer 401.
+    this.auth.logout().subscribe({
+      next: () => this.router.navigate(['/login']),
+      error: () => this.router.navigate(['/login']),
+    });
   }
 }

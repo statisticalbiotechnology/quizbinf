@@ -41,6 +41,14 @@ export class ApiService {
     return this.http.post(`${API_BASE}/api/auth/logout`, {}, this.opts);
   }
 
+  /** Liveness, and whether data written here survives a restart. */
+  health(): Observable<{ status: string; storage: 'persistent' | 'ephemeral' }> {
+    return this.http.get<{ status: string; storage: 'persistent' | 'ephemeral' }>(
+      `${API_BASE}/api/health`,
+      this.opts,
+    );
+  }
+
   // --- teacher: quizzes ---
   listQuizzes(): Observable<Quiz[]> {
     return this.http.get<Quiz[]>(`${API_BASE}/api/quizzes`, this.opts);

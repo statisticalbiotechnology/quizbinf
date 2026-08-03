@@ -14,6 +14,10 @@ yarn.lock
 # uses `npm ci`, which requires it).
 
 # --- Backend (Python) ---
+# The built Angular app, copied here by the Docker build and by the e2e
+# script so one origin serves both. Generated, never edited: a committed
+# copy would shadow the real build with a stale bundle.
+/backend/static/
 __pycache__/
 *.py[cod]
 .venv/

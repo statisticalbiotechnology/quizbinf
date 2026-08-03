@@ -16,6 +16,15 @@ interface ChoiceDraft {
   imports: [FormsModule],
   template: `
     <div class="wrap">
+      @if (ephemeralStorage()) {
+        <p class="storage-warning">
+          <strong>No persistent storage.</strong>
+          Quizzes, answers and logins are lost whenever the app restarts, and
+          everyone is signed out. Attach a writable volume at the configured
+          data directory to fix it.
+        </p>
+      }
+
       <h1>Your quizzes</h1>
 
       <form class="new-quiz" (ngSubmit)="createQuiz()">
@@ -95,6 +104,8 @@ interface ChoiceDraft {
   styles: [
     `
       .wrap { max-width: 44rem; margin: 1.5rem auto; padding: 1rem; }
+      .storage-warning { background: #fdf3f2; border: 1px solid #e6b8b2; border-radius: 6px;
+                         padding: 0.6rem 0.8rem; color: #8a2b20; }
       .quiz { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
       header { display: flex; justify-content: space-between; align-items: center; }
       li.correct { font-weight: 600; color: #2c7; }
@@ -124,6 +135,7 @@ export class TeacherDashboardComponent implements OnInit {
   quizzes = signal<Quiz[]>([]);
   newTitle = '';
   formError = '';
+  ephemeralStorage = signal(false);
   uploading = signal(false);
   uploadError = signal('');
   /** Server-rendered preview of the draft, debounced while typing. */
@@ -185,6 +197,9 @@ export class TeacherDashboardComponent implements OnInit {
 
   ngOnInit(): void {
     this.reload();
+    // Non-persistent storage does not announce itself: the app works until it
+    // restarts, then everything is gone and everyone is signed out.
+    this.api.health().subscribe((h) => this.ephemeralStorage.set(h.storage === 'ephemeral'));
   }
 
   private reload(): void {

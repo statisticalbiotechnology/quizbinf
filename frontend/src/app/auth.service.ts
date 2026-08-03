@@ -41,12 +41,19 @@ export class AuthService {
     return this.inFlight;
   }
 
+  /** Drop the cached identity after the server rejects our cookie. */
+  forgetUser(): void {
+    this.user.set(null);
+    this.loaded.set(true);
+    this.inFlight = undefined;
+  }
+
   mockLogin(username: string, displayName = ''): Observable<User> {
     return this.api.mockLogin(username, displayName).pipe(tap((u) => this.user.set(u)));
   }
 
-  logout(): void {
-    this.api.logout().subscribe(() => this.user.set(null));
+  logout(): Observable<unknown> {
+    return this.api.logout().pipe(tap(() => this.forgetUser()));
   }
 
   isTeacher(): boolean {
