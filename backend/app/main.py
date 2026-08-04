@@ -12,7 +12,7 @@ from starlette.responses import FileResponse
 from .auth import RENEW_FLAG, set_session_cookie
 from .config import VOLUME_ENV_FILE, get_settings
 from .db import Base, engine
-from .routers import auth, images, markdown, quizzes, sessions
+from .routers import auth, images, markdown, quizzes, reports, sessions
 
 log = logging.getLogger("quizbinf")
 
@@ -115,6 +115,7 @@ app.include_router(auth.router)
 app.include_router(images.router)
 app.include_router(markdown.router)
 app.include_router(quizzes.router)
+app.include_router(reports.router)
 app.include_router(sessions.router)
 
 

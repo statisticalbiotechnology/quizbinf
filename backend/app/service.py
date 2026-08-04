@@ -5,6 +5,8 @@ and when answers are accepted. The server is the single source of truth for
 whether a round is open — clients never decide based on their own clock.
 """
 
+from datetime import date, datetime, time
+
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -14,6 +16,7 @@ from .models import (
     Choice,
     Phase,
     Question,
+    Quiz,
     QuizSession,
     Round,
     SessionParticipant,
@@ -208,6 +211,107 @@ def participation_report(db: Session, session: QuizSession) -> list[dict]:
         )
     rows.sort(key=lambda r: (r["display_name"].lower(), r["username"]))
     return rows
+
+
+def semester_participation(
+    db: Session,
+    teacher: User,
+    start: date | None = None,
+    end: date | None = None,
+) -> dict:
+    """Attendance across every session a teacher ran, for end-of-term reporting.
+
+    Answers one question per student per session: did they take part in both
+    bouts? Correctness is deliberately absent — this is the attendance record,
+    not a mark.
+
+    "Took part" means the student answered *both* the pre and the post round
+    of every question that was asked in both bouts in that session. A question
+    that never got its second bout is not counted against anyone, and a
+    session where no question ran both bouts has nothing to attend, reported
+    as None rather than a failure.
+
+    `pairs` is carried alongside the yes/no so a partial attendance is still
+    visible: a strict all-or-nothing verdict would otherwise hide a student
+    who answered three of four questions.
+    """
+    query = (
+        select(QuizSession)
+        .join(Quiz, QuizSession.quiz_id == Quiz.id)
+        .where(Quiz.owner_id == teacher.id)
+        .order_by(QuizSession.created_at, QuizSession.id)
+    )
+    if start is not None:
+        query = query.where(QuizSession.created_at >= datetime.combine(start, time.min))
+    if end is not None:
+        # Inclusive of the end date, which is what a person means by a range.
+        query = query.where(QuizSession.created_at <= datetime.combine(end, time.max))
+    sessions = list(db.scalars(query))
+
+    users: dict[int, User] = {}
+    # user_id -> session_id -> (pairs_completed, pairs_asked)
+    tally: dict[int, dict[int, tuple[int, int]]] = {}
+
+    for session in sessions:
+        # question_id -> phase -> round
+        by_question: dict[int, dict[str, Round]] = {}
+        for round_ in session.rounds:
+            if round_.question is None:
+                continue  # stranded by a question deleted under an older build
+            by_question.setdefault(round_.question_id, {})[round_.phase.value] = round_
+        both_bouts = [
+            phases for phases in by_question.values() if "pre" in phases and "post" in phases
+        ]
+
+        answered_in: dict[int, set[int]] = {}  # round_id -> user ids
+        for phases in by_question.values():
+            for round_ in phases.values():
+                answered_in[round_.id] = {a.user_id for a in round_.answers}
+                for answer in round_.answers:
+                    users[answer.user_id] = answer.user
+
+        for participant in db.scalars(
+            select(SessionParticipant).where(SessionParticipant.session_id == session.id)
+        ):
+            users.setdefault(participant.user_id, participant.user)
+
+        for user_id in users:
+            completed = sum(
+                1
+                for phases in both_bouts
+                if user_id in answered_in[phases["pre"].id]
+                and user_id in answered_in[phases["post"].id]
+            )
+            tally.setdefault(user_id, {})[session.id] = (completed, len(both_bouts))
+
+    rows = []
+    for user_id, user in sorted(users.items(), key=lambda kv: kv[1].username):
+        per_session = []
+        attended = 0
+        for session in sessions:
+            completed, asked = tally.get(user_id, {}).get(session.id, (0, 0))
+            took_part = None if asked == 0 else completed == asked
+            if took_part:
+                attended += 1
+            per_session.append(
+                {"completed": completed, "asked": asked, "took_part": took_part}
+            )
+        rows.append(
+            {
+                "username": user.username,
+                "display_name": user.display_name,
+                "sessions": per_session,
+                "attended": attended,
+            }
+        )
+
+    return {
+        "sessions": [
+            {"code": s.code, "title": s.quiz.title, "date": s.created_at.date().isoformat()}
+            for s in sessions
+        ],
+        "students": rows,
+    }
 
 
 def delete_question(db: Session, question: Question) -> None:

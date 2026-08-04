@@ -269,6 +269,16 @@ URL so the QR code resolves. See the README.
   See `tests/test_answers_survive.py`. Since the database is a single SQLite
   file with no backup, exporting `participation.csv` after a lecture is the
   only real safeguard.
+- **The term report is attendance, not marking.** `GET /api/reports/
+  participation.csv` spans every session its owner has run and answers one
+  question per student per session: did they answer *both* bouts of every
+  question that was asked twice. Correctness is deliberately absent — it is
+  the participation-credit record. A question that never got its second bout
+  counts against nobody, and a session where no question ran both bouts is
+  blank rather than an absence. A failed cell carries the fraction
+  (`no (1/2)`) so the all-or-nothing rule cannot silently hide a student who
+  answered most of them. Personal data, so teacher-only and labelled
+  do-not-project like the Participants view.
 
 ## Local development
 
@@ -332,6 +342,7 @@ alembic upgrade head
 | `GET /api/sessions/{code}/participants` | teacher | how many joined (counts only, no names) |
 | `GET /api/sessions/{code}/participation` | teacher | **per-student** correctness (personal data) |
 | `GET /api/sessions/{code}/participation.csv` | teacher | the same as CSV |
+| `GET /api/reports/participation[.csv]?from=&to=` | teacher | **end of term:** attendance across every session, yes/no per session, no correctness |
 | `GET /api/sessions/{code}/questions/{id}/comparison` | teacher | pre vs post counts |
 | `DELETE /api/sessions/{code}/questions/{id}/rounds` | teacher | reset a question — **discards its answers** so it can be run again |
 | `POST /api/images` | teacher | upload a figure; returns Markdown to paste |

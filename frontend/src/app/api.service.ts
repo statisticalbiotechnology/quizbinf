@@ -153,6 +153,18 @@ export class ApiService {
     return `${API_BASE}/api/sessions/${code}/participation.csv`;
   }
 
+  /**
+   * Attendance across every session in a date range — the end-of-term record.
+   * Personal data: teacher-only, and not something to project.
+   */
+  semesterParticipationCsvUrl(from: string, to: string): string {
+    const range = new URLSearchParams();
+    if (from) range.set('from', from);
+    if (to) range.set('to', to);
+    const query = range.toString();
+    return `${API_BASE}/api/reports/participation.csv${query ? '?' + query : ''}`;
+  }
+
   /** Answer count for the open round — count only, safe to project. */
   liveCount(code: string): Observable<LiveCount> {
     return this.http.get<LiveCount>(`${API_BASE}/api/sessions/${code}/live`, this.opts);

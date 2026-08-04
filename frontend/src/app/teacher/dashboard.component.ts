@@ -27,6 +27,21 @@ interface ChoiceDraft {
 
       <h1>Your quizzes</h1>
 
+      <details class="term-report">
+        <summary>End-of-term participation</summary>
+        <p class="note">
+          Who took part in both bouts, across every session you have run.
+          Attendance only — no correct/incorrect. Contains student names:
+          <strong>do not project</strong>.
+        </p>
+        <div class="range">
+          <label>From <input type="date" [(ngModel)]="reportFrom" name="from" /></label>
+          <label>To <input type="date" [(ngModel)]="reportTo" name="to" /></label>
+          <a class="download" [href]="semesterCsvUrl()" download>Download CSV</a>
+        </div>
+        <p class="note">Leave the dates empty for everything.</p>
+      </details>
+
       <form class="new-quiz" (ngSubmit)="createQuiz()">
         <input [(ngModel)]="newTitle" name="title" placeholder="New quiz title" />
         <button [disabled]="!newTitle.trim()">Create</button>
@@ -106,6 +121,14 @@ interface ChoiceDraft {
       .wrap { max-width: 44rem; margin: 1.5rem auto; padding: 1rem; }
       .storage-warning { background: #fdf3f2; border: 1px solid #e6b8b2; border-radius: 6px;
                          padding: 0.6rem 0.8rem; color: #8a2b20; }
+      .term-report { border: 1px solid #ddd; border-radius: 8px; padding: 0.6rem 1rem;
+                     margin: 1rem 0; }
+      .term-report summary { cursor: pointer; font-weight: 600; }
+      .term-report .note { font-size: 0.85rem; color: #666; margin: 0.5rem 0; }
+      .range { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
+      .range label { font-size: 0.9rem; }
+      .download { border: 1px solid var(--border); border-radius: 6px;
+                  padding: 0.35rem 0.7rem; text-decoration: none; color: inherit; }
       .quiz { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
       header { display: flex; justify-content: space-between; align-items: center; }
       li.correct { font-weight: 600; color: #2c7; }
@@ -135,6 +158,8 @@ export class TeacherDashboardComponent implements OnInit {
   quizzes = signal<Quiz[]>([]);
   newTitle = '';
   formError = '';
+  reportFrom = '';
+  reportTo = '';
   ephemeralStorage = signal(false);
   uploading = signal(false);
   uploadError = signal('');
@@ -214,6 +239,10 @@ export class TeacherDashboardComponent implements OnInit {
         { text: '', is_correct: false },
       ],
     };
+  }
+
+  semesterCsvUrl(): string {
+    return this.api.semesterParticipationCsvUrl(this.reportFrom, this.reportTo);
   }
 
   createQuiz(): void {
