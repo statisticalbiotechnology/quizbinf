@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import service
 from ..auth import current_teacher
 from ..db import get_db
 from ..models import Choice, Question, Quiz, User
@@ -77,5 +78,7 @@ def delete_question(
     question = db.get(Question, question_id)
     if question is None or question.quiz_id != quiz.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Question not found")
-    db.delete(question)
-    db.commit()
+    try:
+        service.delete_question(db, question)
+    except service.RuleViolation as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))

@@ -257,6 +257,18 @@ URL so the QR code resolves. See the README.
   choice (`my_choice_id`).
 - **Time/ordering:** the server is the single source of truth for whether a
   round is open; the client must not trust its own clock.
+- **Answers are the only irreplaceable data.** Nothing expires them: sessions,
+  rounds and answers are rows that live as long as the volume does. Two paths
+  can still destroy them, and both are deliberate — the Control view's *reset*
+  (documented above), and deleting a question. The latter used to be silent
+  and much worse than it looked: nothing cascades from a question to the
+  rounds that asked it, so the answers survived while `Round.question` became
+  None, and the participation report for *every* session using that question
+  raised instead of rendering. Deleting a question that has been asked is now
+  refused (409), and the report skips a stranded round rather than failing.
+  See `tests/test_answers_survive.py`. Since the database is a single SQLite
+  file with no backup, exporting `participation.csv` after a lecture is the
+  only real safeguard.
 
 ## Local development
 

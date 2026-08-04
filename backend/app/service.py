@@ -146,7 +146,13 @@ def participation_report(db: Session, session: QuizSession) -> list[dict]:
 
     Rows are sorted by name so the table is stable between reloads.
     """
-    rounds = sorted(session.rounds, key=lambda r: (r.question_id, r.phase.value))
+    # A round whose question no longer exists cannot be scored, and must not
+    # take the whole report down with it: earlier builds allowed a used
+    # question to be deleted, so this data exists in the wild.
+    rounds = sorted(
+        (r for r in session.rounds if r.question is not None),
+        key=lambda r: (r.question_id, r.phase.value),
+    )
     correct_choice: dict[int, int | None] = {}
     for round_ in rounds:
         if round_.question_id not in correct_choice:
@@ -202,6 +208,31 @@ def participation_report(db: Session, session: QuizSession) -> list[dict]:
         )
     rows.sort(key=lambda r: (r["display_name"].lower(), r["username"]))
     return rows
+
+
+def delete_question(db: Session, question: Question) -> None:
+    """Remove a question, unless doing so would destroy recorded answers.
+
+    A question carries no answers itself — they hang off the rounds that asked
+    it — and nothing cascades from a question to its rounds. Deleting one that
+    has been asked therefore leaves the answers in place but strands them:
+    `Round.question` becomes None, and the participation report for *every*
+    session that used the question raises instead of rendering. The answers
+    are the only irreplaceable data here, so refuse.
+
+    Reset the question first if the intent really is to discard its answers.
+    """
+    used_in = db.scalar(
+        select(func.count()).select_from(Round).where(Round.question_id == question.id)
+    )
+    if used_in:
+        raise RuleViolation(
+            "This question has already been asked and has answers recorded. "
+            "Reset it in the session's Control view first if you want to "
+            "discard them."
+        )
+    db.delete(question)
+    db.commit()
 
 
 def reset_question(db: Session, session: QuizSession, question: Question) -> int:
