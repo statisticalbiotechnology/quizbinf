@@ -269,6 +269,16 @@ URL so the QR code resolves. See the README.
   See `tests/test_answers_survive.py`. Since the database is a single SQLite
   file with no backup, exporting `participation.csv` after a lecture is the
   only real safeguard.
+- **Editing a question follows the same principle.** Text, choice wording,
+  choice order and which choice is correct can all be changed at any time,
+  including after the question has been asked — fixing the wrong answer being
+  marked correct is exactly what editing is for. The one refusal is removing a
+  choice students have already picked, because an answer points at a choice
+  id. Choices therefore carry their id through an edit, so the server can tell
+  a rewording from a replacement. The authoring form is one component
+  (`teacher/question-editor.component.ts`) shared by create and edit, so an
+  edit form cannot quietly become a worse tool than the one that wrote the
+  question. See `tests/test_edit_question.py`.
 - **The term report is attendance, not marking.** `GET /api/reports/
   participation.csv` spans every session its owner has run and answers one
   question per student per session: did they answer *both* bouts of every
@@ -334,6 +344,8 @@ alembic upgrade head
 | `POST /api/auth/mock-login` | dev only | log in without the IdP |
 | `GET /api/auth/login` | all | KTH OIDC flow (**not implemented yet**) |
 | `POST /api/quizzes`, `POST /api/quizzes/{id}/questions` | teacher | author content |
+| `PUT /api/quizzes/{id}/questions/{qid}` | teacher | edit a question; send back the id of every choice kept |
+| `DELETE /api/quizzes/{id}/questions/{qid}` | teacher | delete a question — **409 once it has been asked** |
 | `POST /api/sessions?quiz_id=` | teacher | start a lecture session |
 | `GET /api/sessions/{code}/join-url` | teacher | the URL the QR code encodes |
 | `POST /api/sessions/{code}/rounds` | teacher | open a `pre`/`post` round |
@@ -382,9 +394,8 @@ alembic upgrade head
       Options if this turns out to matter: a per-round code shown only on the
       projected slide and required with the answer, or a short auto-closing
       window. Not built — decide whether it is worth the friction.
-- [ ] **Question editing/reordering and quiz deletion** — only create and
-      delete-question exist today. A question's rounds can be reset (Control
-      view), which discards its answers and lets it be asked again; that is a
-      rehearsal aid, not an editing feature.
+- [ ] **Question reordering and quiz deletion.** Questions can now be created,
+      edited and deleted; reordering them within a quiz, and deleting a whole
+      quiz, are still missing.
 - [ ] Consider showing students the correct answer after the post round
       closes (currently never revealed to them).

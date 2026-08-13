@@ -6,7 +6,7 @@ from .. import service
 from ..auth import current_teacher
 from ..db import get_db
 from ..models import Choice, Question, Quiz, User
-from ..schemas import QuestionIn, QuestionTeacherOut, QuizIn, QuizOut
+from ..schemas import QuestionEdit, QuestionIn, QuestionTeacherOut, QuizIn, QuizOut
 
 router = APIRouter(prefix="/api/quizzes", tags=["quizzes"])
 
@@ -65,6 +65,26 @@ def add_question(
     db.commit()
     db.refresh(question)
     return question
+
+
+@router.put("/{quiz_id}/questions/{question_id}", response_model=QuestionTeacherOut)
+def edit_question(
+    quiz_id: int,
+    question_id: int,
+    body: QuestionEdit,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+) -> Question:
+    quiz = _own_quiz(db, quiz_id, teacher)
+    question = db.get(Question, question_id)
+    if question is None or question.quiz_id != quiz.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Question not found")
+    try:
+        return service.update_question(
+            db, question, body.text, body.image_url, body.choices
+        )
+    except service.RuleViolation as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
 
 
 @router.delete("/{quiz_id}/questions/{question_id}", status_code=status.HTTP_204_NO_CONTENT)

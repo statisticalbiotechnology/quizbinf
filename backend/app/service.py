@@ -314,6 +314,76 @@ def semester_participation(
     }
 
 
+def update_question(
+    db: Session,
+    question: Question,
+    text: str,
+    image_url: str | None,
+    choices: list,
+) -> Question:
+    """Edit a question in place, keeping recorded answers readable.
+
+    Choices carrying an `id` are the ones already stored: they are reworded,
+    re-ordered or re-marked. A choice with no id is new. One that is left out
+    is removed — and that is the only move which can destroy data, because an
+    answer points at a choice id. Removing a choice students have picked would
+    leave their answers pointing at nothing and the histogram unable to name
+    what they chose, so it is refused.
+
+    Everything else is allowed even after the question has been asked, typos
+    being the main reason to edit at all. Changing which choice is correct is
+    included on purpose: marking the wrong one is exactly the mistake a
+    teacher needs to fix, and the per-session report then reads correctly.
+    """
+    existing = {c.id: c for c in question.choices}
+    incoming_ids = {c.id for c in choices if c.id is not None}
+
+    unknown = incoming_ids - existing.keys()
+    if unknown:
+        raise RuleViolation("A choice being edited does not belong to this question")
+
+    for choice_id, choice in existing.items():
+        if choice_id in incoming_ids:
+            continue
+        answered = db.scalar(
+            select(func.count()).select_from(Answer).where(Answer.choice_id == choice_id)
+        )
+        if answered:
+            raise RuleViolation(
+                f"“{choice.text}” has already been chosen by students. Reword it "
+                "instead of removing it, or reset the question first to discard "
+                "those answers."
+            )
+
+    question.text = text
+    question.image_url = image_url
+
+    kept: list[Choice] = []
+    for position, incoming in enumerate(choices):
+        if incoming.id is not None:
+            choice = existing[incoming.id]
+            choice.text = incoming.text
+            choice.is_correct = incoming.is_correct
+            choice.position = position
+        else:
+            choice = Choice(
+                question_id=question.id,
+                position=position,
+                text=incoming.text,
+                is_correct=incoming.is_correct,
+            )
+            db.add(choice)
+        kept.append(choice)
+
+    for choice_id, choice in existing.items():
+        if choice_id not in incoming_ids:
+            db.delete(choice)
+
+    db.commit()
+    db.refresh(question)
+    return question
+
+
 def delete_question(db: Session, question: Question) -> None:
     """Remove a question, unless doing so would destroy recorded answers.
 

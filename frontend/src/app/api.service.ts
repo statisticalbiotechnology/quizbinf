@@ -11,6 +11,7 @@ import {
   ParticipationReport,
   Phase,
   Question,
+  QuestionEditInput,
   QuestionInput,
   Quiz,
   QuizSession,
@@ -86,6 +87,27 @@ export class ApiService {
 
   addQuestion(quizId: number, q: QuestionInput): Observable<Question> {
     return this.http.post<Question>(`${API_BASE}/api/quizzes/${quizId}/questions`, q, this.opts);
+  }
+
+  /**
+   * Edit a question in place. Send back the id of every choice being kept —
+   * one that is left out is removed, which the server refuses if students
+   * have already answered it.
+   */
+  editQuestion(quizId: number, questionId: number, q: QuestionEditInput): Observable<Question> {
+    return this.http.put<Question>(
+      `${API_BASE}/api/quizzes/${quizId}/questions/${questionId}`,
+      q,
+      this.opts,
+    );
+  }
+
+  /** Refused (409) once the question has been asked, to protect its answers. */
+  deleteQuestion(quizId: number, questionId: number): Observable<void> {
+    return this.http.delete<void>(
+      `${API_BASE}/api/quizzes/${quizId}/questions/${questionId}`,
+      this.opts,
+    );
   }
 
   // --- teacher: sessions ---

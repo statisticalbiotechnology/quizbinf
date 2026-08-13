@@ -3,17 +3,13 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
 import { ApiService } from '../api.service';
-import { Quiz } from '../models';
-
-interface ChoiceDraft {
-  text: string;
-  is_correct: boolean;
-}
+import { Question, Quiz } from '../models';
+import { QuestionDraft, QuestionEditorComponent } from './question-editor.component';
 
 @Component({
   selector: 'app-teacher-dashboard',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, QuestionEditorComponent],
   template: `
     <div class="wrap">
       @if (ephemeralStorage()) {
@@ -57,60 +53,47 @@ interface ChoiceDraft {
           <ol>
             @for (q of quiz.questions; track q.id) {
               <li>
-                <span [innerHTML]="q.text_html"></span>
-                <ul>
-                  @for (c of q.choices; track c.id) {
-                    <li [class.correct]="c.is_correct">{{ c.text }}</li>
+                @if (editingId() === q.id) {
+                  <app-question-editor
+                    [draft]="editDraft!"
+                    [formId]="'edit' + q.id"
+                    submitLabel="Save changes"
+                    [showCancel]="true"
+                    [error]="editError()"
+                    (save)="saveEdit(quiz)"
+                    (cancel)="cancelEdit()"
+                  />
+                } @else {
+                  <div class="q-row">
+                    <span [innerHTML]="q.text_html"></span>
+                    <span class="q-actions">
+                      <button type="button" (click)="startEdit(q)">Edit</button>
+                      <button type="button" class="danger" (click)="removeQuestion(quiz, q)">
+                        Delete
+                      </button>
+                    </span>
+                  </div>
+                  <ul>
+                    @for (c of q.choices; track c.id) {
+                      <li [class.correct]="c.is_correct">{{ c.text }}</li>
+                    }
+                  </ul>
+                  @if (deleteError()[q.id]; as msg) {
+                    <p class="error">{{ msg }}</p>
                   }
-                </ul>
+                }
               </li>
             }
           </ol>
 
           <details>
             <summary>Add question</summary>
-            <div class="add-q">
-              <textarea [(ngModel)]="draft.text" name="qtext"
-                        (ngModelChange)="onTextChanged()"
-                        placeholder="Question text — Markdown supported: **bold**, *italic*, lists, tables, images"></textarea>
-              <div class="md-tools">
-                <label class="upload">
-                  <input type="file" accept="image/png,image/jpeg,image/gif,image/webp"
-                         (change)="uploadImage($event)" hidden />
-                  {{ uploading() ? 'Uploading…' : '🖼 Add image' }}
-                </label>
-                <span class="md-hint">
-                  Markdown supported. Uploads are inserted as an image link.
-                </span>
-              </div>
-              @if (uploadError()) {
-                <p class="error">{{ uploadError() }}</p>
-              }
-              @if (draft.text.trim()) {
-                <div class="preview">
-                  <span class="preview-label">Preview</span>
-                  <div [innerHTML]="preview()"></div>
-                </div>
-              }
-              @for (c of draft.choices; track $index) {
-                <div class="choice-row">
-                  <label class="mark" [class.on]="c.is_correct">
-                    <input type="radio" name="correct" [checked]="c.is_correct"
-                           (change)="setCorrect($index)" />
-                    <span>correct</span>
-                  </label>
-                  <input [(ngModel)]="c.text" [name]="'c' + $index" placeholder="Choice text" />
-                </div>
-              }
-              <button type="button" (click)="addChoiceRow()">+ choice</button>
-              <button (click)="addQuestion(quiz)" [disabled]="!questionValid()">Save question</button>
-              @if (!questionValid()) {
-                <p class="hint">{{ whyInvalid() }}</p>
-              }
-              @if (formError) {
-                <p class="error">{{ formError }}</p>
-              }
-            </div>
+            <app-question-editor
+              [draft]="draft"
+              [formId]="'new' + quiz.id"
+              [error]="formError"
+              (save)="addQuestion(quiz)"
+            />
           </details>
         </section>
       }
@@ -132,24 +115,11 @@ interface ChoiceDraft {
       .quiz { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
       header { display: flex; justify-content: space-between; align-items: center; }
       li.correct { font-weight: 600; color: #2c7; }
-      .choice-row { display: flex; gap: 0.5rem; align-items: center; margin: 0.3rem 0; }
-      .mark { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer;
-              border: 1px solid var(--border); border-radius: 6px; padding: 0.25rem 0.5rem;
-              font-size: 0.85rem; color: #777; white-space: nowrap; }
-      .mark.on { border-color: #2c7a51; background: #eafaf1; color: #2c7a51; font-weight: 600; }
-      .hint { font-size: 0.85rem; color: #777; margin: 0.3rem 0 0; }
-      textarea { width: 100%; min-height: 5rem; font-family: inherit; }
-      .md-tools { display: flex; gap: 0.6rem; align-items: center; margin: 0.4rem 0; }
-      .upload { cursor: pointer; border: 1px solid var(--border); border-radius: 6px;
-                padding: 0.35rem 0.7rem; font-size: 0.85rem; white-space: nowrap; }
-      .md-hint { font-size: 0.8rem; color: #777; }
-      .preview { border: 1px dashed #ccc; border-radius: 6px; padding: 0.6rem;
-                 margin: 0.5rem 0; position: relative; }
-      .preview-label { position: absolute; top: -0.6rem; left: 0.6rem; background: #fff;
-                       padding: 0 0.3rem; font-size: 0.7rem; color: #888; text-transform: uppercase; }
-      .preview img { max-width: 100%; height: auto; border-radius: 4px; }
-      .preview table { border-collapse: collapse; }
-      .preview th, .preview td { border: 1px solid #ddd; padding: 0.2rem 0.4rem; }
+      .q-row { display: flex; justify-content: space-between; align-items: flex-start;
+               gap: 0.75rem; }
+      .q-actions { display: flex; gap: 0.3rem; flex-shrink: 0; }
+      .q-actions button { font-size: 0.8rem; padding: 0.2rem 0.5rem; }
+      .q-actions .danger { color: #c0392b; }
       .error { color: #c0392b; }
     `,
   ],
@@ -161,64 +131,16 @@ export class TeacherDashboardComponent implements OnInit {
   reportFrom = '';
   reportTo = '';
   ephemeralStorage = signal(false);
-  uploading = signal(false);
-  uploadError = signal('');
-  /** Server-rendered preview of the draft, debounced while typing. */
-  preview = signal<string>('');
-  private previewTimer?: ReturnType<typeof setTimeout>;
-  draft: { text: string; choices: ChoiceDraft[] } = this.blankDraft();
+  draft: QuestionDraft = this.blankDraft();
+
+  /** Which question is open in the inline editor, if any. */
+  editingId = signal<number | null>(null);
+  editDraft: QuestionDraft | null = null;
+  editError = signal('');
+  /** Refusals keyed by question id, so each row explains its own failure. */
+  deleteError = signal<Record<number, string>>({});
 
   constructor(private api: ApiService, private router: Router) {}
-
-  /**
-   * Upload a figure and append the Markdown that displays it.
-   *
-   * Files are stored on the app's own volume rather than linked from
-   * elsewhere, so a question does not break if an external host is down
-   * mid-lecture.
-   */
-  uploadImage(event: Event): void {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    this.uploadError.set('');
-    this.uploading.set(true);
-    this.api.uploadImage(file).subscribe({
-      next: ({ markdown }) => {
-        const sep = this.draft.text && !this.draft.text.endsWith('\n') ? '\n\n' : '';
-        this.draft.text = `${this.draft.text}${sep}${markdown}`;
-        this.uploading.set(false);
-        input.value = '';
-        this.refreshPreview();
-      },
-      error: (err) => {
-        this.uploadError.set(err?.error?.detail ?? 'Could not upload that image.');
-        this.uploading.set(false);
-        input.value = '';
-      },
-    });
-  }
-
-  /**
-   * Render the preview on the server, so what the teacher sees is exactly what
-   * students will get — including the sanitising.
-   */
-  private refreshPreview(): void {
-    if (this.previewTimer) clearTimeout(this.previewTimer);
-    this.previewTimer = setTimeout(() => {
-      const text = this.draft.text.trim();
-      if (!text) {
-        this.preview.set('');
-        return;
-      }
-      this.api.renderMarkdown(text).subscribe({
-        // Bound with [innerHTML], so Angular sanitises it as well — the
-        // preview therefore shows exactly what a student's browser will.
-        next: ({ html }) => this.preview.set(html),
-        error: () => this.preview.set(''),
-      });
-    }, 300);
-  }
 
   ngOnInit(): void {
     this.reload();
@@ -253,36 +175,72 @@ export class TeacherDashboardComponent implements OnInit {
     });
   }
 
-  onTextChanged(): void {
-    this.refreshPreview();
+  /**
+   * Open a question for editing, working on a copy.
+   *
+   * Choice ids come along: the server needs them to tell a reworded choice
+   * from a new one, because answers point at choice ids.
+   */
+  startEdit(q: Question): void {
+    this.editError.set('');
+    this.editDraft = {
+      text: q.text,
+      choices: q.choices.map((c) => ({
+        id: c.id,
+        text: c.text,
+        is_correct: !!c.is_correct,
+      })),
+    };
+    this.editingId.set(q.id);
   }
 
-  addChoiceRow(): void {
-    this.draft.choices.push({ text: '', is_correct: false });
+  cancelEdit(): void {
+    this.editingId.set(null);
+    this.editDraft = null;
+    this.editError.set('');
   }
 
-  setCorrect(index: number): void {
-    this.draft.choices.forEach((c, i) => (c.is_correct = i === index));
+  saveEdit(quiz: Quiz): void {
+    const id = this.editingId();
+    if (id === null || !this.editDraft) return;
+    this.editError.set('');
+    this.api
+      .editQuestion(quiz.id, id, {
+        text: this.editDraft.text.trim(),
+        image_url: null,
+        choices: this.editDraft.choices.filter((c) => c.text.trim()),
+      })
+      .subscribe({
+        next: () => {
+          this.cancelEdit();
+          this.reload();
+        },
+        error: (err) =>
+          this.editError.set(err?.error?.detail ?? 'Could not save those changes.'),
+      });
   }
 
-  /** Why the question cannot be saved yet, in the teacher's terms. */
-  whyInvalid(): string {
-    if (!this.draft.text.trim()) return 'Write the question text.';
-    const filled = this.draft.choices.filter((c) => c.text.trim());
-    if (filled.length < 2) return 'Add at least two choices.';
-    if (!filled.some((c) => c.is_correct)) {
-      return 'Mark which choice is correct.';
-    }
-    return '';
-  }
-
-  questionValid(): boolean {
-    const filled = this.draft.choices.filter((c) => c.text.trim());
-    return (
-      this.draft.text.trim().length > 0 &&
-      filled.length >= 2 &&
-      filled.filter((c) => c.is_correct).length === 1
-    );
+  /**
+   * Delete a question, after confirming.
+   *
+   * The server refuses if it has already been asked — the answers would be
+   * stranded — so the refusal is shown against the question rather than
+   * swallowed.
+   */
+  removeQuestion(quiz: Quiz, q: Question): void {
+    if (!confirm('Delete this question? This cannot be undone.')) return;
+    this.deleteError.update((errors) => {
+      const { [q.id]: _dropped, ...rest } = errors;
+      return rest;
+    });
+    this.api.deleteQuestion(quiz.id, q.id).subscribe({
+      next: () => this.reload(),
+      error: (err) =>
+        this.deleteError.update((errors) => ({
+          ...errors,
+          [q.id]: err?.error?.detail ?? 'Could not delete that question.',
+        })),
+    });
   }
 
   addQuestion(quiz: Quiz): void {
