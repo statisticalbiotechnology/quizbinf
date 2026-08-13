@@ -41,6 +41,45 @@ class User(Base):
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.student)
 
 
+class RosterEntry(Base):
+    """A student enrolled in a Canvas course, as of the last sync.
+
+    Two jobs. It records who is *supposed* to be in the room, and it maps a
+    Canvas user id to a KTH identity — which is what makes Canvas login usable
+    without asking for extra API scopes on the developer key: the login itself
+    returns only a Canvas user id, and this table turns that into a person.
+
+    `kthid` (Canvas `sis_user_id`, a `u1…` value) is the identifier to match
+    on. It outlives a username change, and it is the same identifier KTH's own
+    IdP exposes — so a student who authenticates through Canvas today and
+    through KTH tomorrow stays one person rather than becoming two.
+
+    Personal data: names of real students. Kept to the minimum needed to
+    identify them; the email Canvas also returns is deliberately not stored,
+    because the app never sends mail.
+    """
+
+    __tablename__ = "roster_entries"
+    __table_args__ = (
+        UniqueConstraint("course_id", "canvas_user_id", name="uq_roster_course_user"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # The Canvas course this enrolment belongs to.
+    course_id: Mapped[int] = mapped_column(index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    canvas_user_id: Mapped[int] = mapped_column(index=True)
+    # Canvas sis_user_id: KTH's permanent person id. May be absent for a
+    # Canvas account with no SIS record, so it is nullable rather than assumed.
+    kthid: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Local part of Canvas login_id ("shiraza@kth.se" -> "shiraza").
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    display_name: Mapped[str] = mapped_column(String(128))
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    owner: Mapped[User] = relationship()
+
+
 class Quiz(Base):
     __tablename__ = "quizzes"
 

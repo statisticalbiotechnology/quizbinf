@@ -18,6 +18,7 @@ from .models import (
     Question,
     Quiz,
     QuizSession,
+    RosterEntry,
     Round,
     SessionParticipant,
     User,
@@ -312,6 +313,100 @@ def semester_participation(
         ],
         "students": rows,
     }
+
+
+def sync_roster(db: Session, teacher: User, course_id: int, students: list[dict]) -> dict:
+    """Replace the stored roster for a course with what Canvas just reported.
+
+    A sync is a mirror, not an append: students who have dropped the course
+    disappear, which is the point of syncing rather than uploading a
+    spreadsheet once. Removing a roster entry removes nothing else — answers
+    live in their own table and are untouched, so a student who drops still
+    appears in the participation record for the sessions they attended.
+    """
+    existing = {
+        entry.canvas_user_id: entry
+        for entry in db.scalars(
+            select(RosterEntry).where(RosterEntry.course_id == course_id)
+        )
+    }
+    seen: set[int] = set()
+    added = updated = 0
+    now = utcnow()
+
+    for student in students:
+        canvas_user_id = student["canvas_user_id"]
+        seen.add(canvas_user_id)
+        entry = existing.get(canvas_user_id)
+        if entry is None:
+            db.add(
+                RosterEntry(
+                    course_id=course_id,
+                    owner_id=teacher.id,
+                    canvas_user_id=canvas_user_id,
+                    kthid=student.get("kthid"),
+                    username=student["username"],
+                    display_name=student["display_name"],
+                    synced_at=now,
+                )
+            )
+            added += 1
+        else:
+            changed = (
+                entry.kthid != student.get("kthid")
+                or entry.username != student["username"]
+                or entry.display_name != student["display_name"]
+            )
+            entry.kthid = student.get("kthid")
+            entry.username = student["username"]
+            entry.display_name = student["display_name"]
+            entry.synced_at = now
+            entry.owner_id = teacher.id
+            if changed:
+                updated += 1
+
+    removed = 0
+    for canvas_user_id, entry in existing.items():
+        if canvas_user_id not in seen:
+            db.delete(entry)
+            removed += 1
+
+    db.commit()
+    return {
+        "course_id": course_id,
+        "total": len(students),
+        "added": added,
+        "updated": updated,
+        "removed": removed,
+    }
+
+
+def course_roster(db: Session, course_id: int) -> list[RosterEntry]:
+    return list(
+        db.scalars(
+            select(RosterEntry)
+            .where(RosterEntry.course_id == course_id)
+            .order_by(RosterEntry.display_name)
+        )
+    )
+
+
+def roster_courses(db: Session, teacher: User) -> list[dict]:
+    """Courses this teacher has synced, with how many students each holds."""
+    rows = db.execute(
+        select(
+            RosterEntry.course_id,
+            func.count(RosterEntry.id),
+            func.max(RosterEntry.synced_at),
+        )
+        .where(RosterEntry.owner_id == teacher.id)
+        .group_by(RosterEntry.course_id)
+        .order_by(RosterEntry.course_id)
+    ).all()
+    return [
+        {"course_id": course_id, "students": count, "synced_at": synced_at}
+        for course_id, count, synced_at in rows
+    ]
 
 
 def update_question(

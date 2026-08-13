@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 
 import { API_BASE } from './api.config';
 import {
+  CanvasCourse,
   Comparison,
   Histogram,
   LiveCount,
@@ -15,8 +16,10 @@ import {
   QuestionInput,
   Quiz,
   QuizSession,
+  RosterStatus,
   Round,
   SessionState,
+  SyncSummary,
   User,
 } from './models';
 
@@ -106,6 +109,29 @@ export class ApiService {
   deleteQuestion(quizId: number, questionId: number): Observable<void> {
     return this.http.delete<void>(
       `${API_BASE}/api/quizzes/${quizId}/questions/${questionId}`,
+      this.opts,
+    );
+  }
+
+  // --- teacher: Canvas roster ---
+  /**
+   * Whether Canvas is configured, and which courses have been synced.
+   * The Canvas access token stays on the server; this never carries it.
+   */
+  rosterStatus(): Observable<RosterStatus> {
+    return this.http.get<RosterStatus>(`${API_BASE}/api/roster/status`, this.opts);
+  }
+
+  /** Canvas courses the configured token's owner teaches. */
+  canvasCourses(): Observable<CanvasCourse[]> {
+    return this.http.get<CanvasCourse[]>(`${API_BASE}/api/roster/courses`, this.opts);
+  }
+
+  /** Mirror a course's student list into the local roster. */
+  syncRoster(courseId: number): Observable<SyncSummary> {
+    return this.http.post<SyncSummary>(
+      `${API_BASE}/api/roster/sync?course_id=${courseId}`,
+      {},
       this.opts,
     );
   }

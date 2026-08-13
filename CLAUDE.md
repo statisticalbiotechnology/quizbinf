@@ -159,6 +159,38 @@ quizbinf/
   could not verify an in-date cookie, i.e. the session secret is not what
   signed it.
 
+## Canvas: the course roster
+
+Reading the roster is the one piece of Canvas integration that is
+**self-service**: the teacher generates a personal access token at
+`https://canvas.kth.se/profile/settings` (Approved Integrations → New Access
+Token) and sets `CANVAS_TOKEN`. No administrator is involved. The token acts
+as that teacher, so it is a secret: it lives in the config file on the volume,
+never reaches a client, and is never logged.
+
+- `app/canvas.py` reads `GET /api/v1/courses/{id}/users`. **It must follow the
+  `Link: rel="next"` chain** — Canvas caps `per_page` at 100 and reports no
+  total, so a course of 137 students silently returns 100 without it. That is
+  pinned by a test.
+- A sync is a **mirror, not an append**: students who dropped disappear.
+  Removing a roster row removes nothing else — answers live in their own table,
+  so a student who drops still appears in the participation record for the
+  sessions they attended.
+- **`kthid` (Canvas `sis_user_id`, a `u1…` value) is the identifier to match
+  on**, not the username. It survives a username change, and it is the same
+  identifier KTH's own IdP exposes — so a student who authenticates through
+  Canvas today and through KTH later stays one person instead of becoming two.
+  `login_id` (`shiraza@kth.se`) supplies the display username.
+- **Email is deliberately not stored.** Canvas returns it; the app never sends
+  mail, so keeping it would be personal data held for no reason.
+- The roster is personal data: teacher-only endpoints, and the dashboard shows
+  counts rather than names.
+
+The roster also removes a dependency from the *login* work still to come:
+Canvas OAuth2 returns only a Canvas user id, and the roster already maps that
+id to a KTH identity — so the developer key needs no extra API scopes, and a
+valid Canvas login from someone not enrolled can be refused.
+
 ## Deployment: SciLifeLab Serve
 
 Target (decided): **SciLifeLab Serve**, https://serve.scilifelab.se. Serve
@@ -355,6 +387,10 @@ alembic upgrade head
 | `GET /api/sessions/{code}/participation` | teacher | **per-student** correctness (personal data) |
 | `GET /api/sessions/{code}/participation.csv` | teacher | the same as CSV |
 | `GET /api/reports/participation[.csv]?from=&to=` | teacher | **end of term:** attendance across every session, yes/no per session, no correctness |
+| `GET /api/roster/status` | teacher | is Canvas configured, and what has been synced |
+| `GET /api/roster/courses` | teacher | Canvas courses the token's owner teaches |
+| `POST /api/roster/sync?course_id=` | teacher | mirror a course's students into the local roster |
+| `GET /api/roster?course_id=` | teacher | the stored roster (**personal data**) |
 | `GET /api/sessions/{code}/questions/{id}/comparison` | teacher | pre vs post counts |
 | `DELETE /api/sessions/{code}/questions/{id}/rounds` | teacher | reset a question — **discards its answers** so it can be run again |
 | `POST /api/images` | teacher | upload a figure; returns Markdown to paste |

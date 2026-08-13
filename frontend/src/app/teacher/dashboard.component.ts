@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
 import { ApiService } from '../api.service';
-import { Question, Quiz } from '../models';
+import { CanvasCourse, Question, Quiz, RosterStatus, SyncSummary } from '../models';
 import { QuestionDraft, QuestionEditorComponent } from './question-editor.component';
 
 @Component({
@@ -36,6 +36,66 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
           <a class="download" [href]="semesterCsvUrl()" download>Download CSV</a>
         </div>
         <p class="note">Leave the dates empty for everything.</p>
+      </details>
+
+      <details class="term-report roster" (toggle)="onRosterOpened($event)">
+        <summary>Course roster (Canvas)</summary>
+        @if (rosterStatus(); as status) {
+          @if (!status.canvas_configured) {
+            <p class="note">
+              Not configured. Generate a personal access token at
+              <code>{{ status.canvas_base_url }}/profile/settings</code>
+              (Approved Integrations → New Access Token) and set
+              <code>CANVAS_TOKEN</code> in the app's configuration file. The
+              token needs no administrator, and stays on the server.
+            </p>
+          } @else {
+            <p class="note">
+              Syncing mirrors the current enrolment: students who have dropped
+              the course are removed. Only names and KTH ids are stored, never
+              email. Student names — <strong>do not project</strong>.
+            </p>
+            <div class="range">
+              <label>
+                Course
+                <select [(ngModel)]="selectedCourse" name="course">
+                  <option [ngValue]="null">
+                    {{ coursesLoading() ? 'Loading…' : 'Choose a course' }}
+                  </option>
+                  @for (c of canvasCourses(); track c.id) {
+                    <option [ngValue]="c.id">{{ c.name }}</option>
+                  }
+                </select>
+              </label>
+              <button (click)="syncRoster()" [disabled]="!selectedCourse || syncing()">
+                {{ syncing() ? 'Syncing…' : 'Sync roster' }}
+              </button>
+            </div>
+
+            @if (syncSummary(); as s) {
+              <p class="note">
+                Synced course {{ s.course_id }}: {{ s.total }} students
+                ({{ s.added }} added, {{ s.updated }} updated, {{ s.removed }} removed).
+              </p>
+            }
+
+            @if (status.courses.length) {
+              <table class="synced">
+                <tr><th>Course</th><th>Students</th><th>Last synced</th></tr>
+                @for (c of status.courses; track c.course_id) {
+                  <tr>
+                    <td>{{ c.course_id }}</td>
+                    <td>{{ c.students }}</td>
+                    <td>{{ c.synced_at }}</td>
+                  </tr>
+                }
+              </table>
+            }
+          }
+          @if (rosterError()) {
+            <p class="error">{{ rosterError() }}</p>
+          }
+        }
       </details>
 
       <form class="new-quiz" (ngSubmit)="createQuiz()">
@@ -120,6 +180,11 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
       .q-actions { display: flex; gap: 0.3rem; flex-shrink: 0; }
       .q-actions button { font-size: 0.8rem; padding: 0.2rem 0.5rem; }
       .q-actions .danger { color: #c0392b; }
+      .roster code { background: #f4f4f4; padding: 0 0.25rem; border-radius: 3px;
+                     font-size: 0.85em; word-break: break-all; }
+      .synced { border-collapse: collapse; margin: 0.5rem 0; font-size: 0.85rem; }
+      .synced th, .synced td { border: 1px solid #ddd; padding: 0.2rem 0.5rem;
+                               text-align: left; }
       .error { color: #c0392b; }
     `,
   ],
@@ -139,6 +204,14 @@ export class TeacherDashboardComponent implements OnInit {
   editError = signal('');
   /** Refusals keyed by question id, so each row explains its own failure. */
   deleteError = signal<Record<number, string>>({});
+
+  rosterStatus = signal<RosterStatus | null>(null);
+  canvasCourses = signal<CanvasCourse[]>([]);
+  coursesLoading = signal(false);
+  selectedCourse: number | null = null;
+  syncing = signal(false);
+  syncSummary = signal<SyncSummary | null>(null);
+  rosterError = signal('');
 
   constructor(private api: ApiService, private router: Router) {}
 
@@ -161,6 +234,58 @@ export class TeacherDashboardComponent implements OnInit {
         { text: '', is_correct: false },
       ],
     };
+  }
+
+  /**
+   * Load the roster panel when it is first opened, not on every dashboard
+   * visit: listing Canvas courses is a call out to Canvas.
+   */
+  onRosterOpened(event: Event): void {
+    if (!(event.target as HTMLDetailsElement).open) return;
+    if (this.rosterStatus()) return;
+    this.refreshRosterStatus(true);
+  }
+
+  private refreshRosterStatus(loadCourses = false): void {
+    this.api.rosterStatus().subscribe({
+      next: (status) => {
+        this.rosterStatus.set(status);
+        if (loadCourses && status.canvas_configured) this.loadCanvasCourses();
+      },
+      error: () => this.rosterError.set('Could not read the roster status.'),
+    });
+  }
+
+  private loadCanvasCourses(): void {
+    this.coursesLoading.set(true);
+    this.api.canvasCourses().subscribe({
+      next: (courses) => {
+        this.canvasCourses.set(courses);
+        this.coursesLoading.set(false);
+      },
+      error: (err) => {
+        this.rosterError.set(err?.error?.detail ?? 'Could not list Canvas courses.');
+        this.coursesLoading.set(false);
+      },
+    });
+  }
+
+  syncRoster(): void {
+    if (!this.selectedCourse) return;
+    this.rosterError.set('');
+    this.syncSummary.set(null);
+    this.syncing.set(true);
+    this.api.syncRoster(this.selectedCourse).subscribe({
+      next: (summary) => {
+        this.syncSummary.set(summary);
+        this.syncing.set(false);
+        this.refreshRosterStatus();
+      },
+      error: (err) => {
+        this.rosterError.set(err?.error?.detail ?? 'Could not sync that course.');
+        this.syncing.set(false);
+      },
+    });
   }
 
   semesterCsvUrl(): string {

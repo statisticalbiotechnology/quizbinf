@@ -119,6 +119,33 @@ export interface ChoiceEditInput extends ChoiceInput {
   id?: number;
 }
 
+/** A Canvas course the teacher can sync a roster from. */
+export interface CanvasCourse {
+  id: number;
+  name: string;
+  code: string | null;
+}
+
+export interface SyncedCourse {
+  course_id: number;
+  students: number;
+  synced_at: string;
+}
+
+export interface RosterStatus {
+  canvas_configured: boolean;
+  canvas_base_url: string;
+  courses: SyncedCourse[];
+}
+
+export interface SyncSummary {
+  course_id: number;
+  total: number;
+  added: number;
+  updated: number;
+  removed: number;
+}
+
 export interface QuestionEditInput {
   text: string;
   image_url: string | null;
