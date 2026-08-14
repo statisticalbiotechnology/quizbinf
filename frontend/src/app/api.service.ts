@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 
 import { API_BASE } from './api.config';
 import {
+  CanvasCourse,
   Comparison,
   Histogram,
   LiveCount,
@@ -11,11 +12,14 @@ import {
   ParticipationReport,
   Phase,
   Question,
+  QuestionEditInput,
   QuestionInput,
   Quiz,
   QuizSession,
+  RosterStatus,
   Round,
   SessionState,
+  SyncSummary,
   User,
 } from './models';
 
@@ -88,6 +92,50 @@ export class ApiService {
     return this.http.post<Question>(`${API_BASE}/api/quizzes/${quizId}/questions`, q, this.opts);
   }
 
+  /**
+   * Edit a question in place. Send back the id of every choice being kept —
+   * one that is left out is removed, which the server refuses if students
+   * have already answered it.
+   */
+  editQuestion(quizId: number, questionId: number, q: QuestionEditInput): Observable<Question> {
+    return this.http.put<Question>(
+      `${API_BASE}/api/quizzes/${quizId}/questions/${questionId}`,
+      q,
+      this.opts,
+    );
+  }
+
+  /** Refused (409) once the question has been asked, to protect its answers. */
+  deleteQuestion(quizId: number, questionId: number): Observable<void> {
+    return this.http.delete<void>(
+      `${API_BASE}/api/quizzes/${quizId}/questions/${questionId}`,
+      this.opts,
+    );
+  }
+
+  // --- teacher: Canvas roster ---
+  /**
+   * Whether Canvas is configured, and which courses have been synced.
+   * The Canvas access token stays on the server; this never carries it.
+   */
+  rosterStatus(): Observable<RosterStatus> {
+    return this.http.get<RosterStatus>(`${API_BASE}/api/roster/status`, this.opts);
+  }
+
+  /** Canvas courses the configured token's owner teaches. */
+  canvasCourses(): Observable<CanvasCourse[]> {
+    return this.http.get<CanvasCourse[]>(`${API_BASE}/api/roster/courses`, this.opts);
+  }
+
+  /** Mirror a course's student list into the local roster. */
+  syncRoster(courseId: number): Observable<SyncSummary> {
+    return this.http.post<SyncSummary>(
+      `${API_BASE}/api/roster/sync?course_id=${courseId}`,
+      {},
+      this.opts,
+    );
+  }
+
   // --- teacher: sessions ---
   createSession(quizId: number): Observable<QuizSession> {
     return this.http.post<QuizSession>(
@@ -151,6 +199,18 @@ export class ApiService {
 
   participationCsvUrl(code: string): string {
     return `${API_BASE}/api/sessions/${code}/participation.csv`;
+  }
+
+  /**
+   * Attendance across every session in a date range — the end-of-term record.
+   * Personal data: teacher-only, and not something to project.
+   */
+  semesterParticipationCsvUrl(from: string, to: string): string {
+    const range = new URLSearchParams();
+    if (from) range.set('from', from);
+    if (to) range.set('to', to);
+    const query = range.toString();
+    return `${API_BASE}/api/reports/participation.csv${query ? '?' + query : ''}`;
   }
 
   /** Answer count for the open round — count only, safe to project. */

@@ -5,6 +5,8 @@ and when answers are accepted. The server is the single source of truth for
 whether a round is open — clients never decide based on their own clock.
 """
 
+from datetime import date, datetime, time
+
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -14,7 +16,9 @@ from .models import (
     Choice,
     Phase,
     Question,
+    Quiz,
     QuizSession,
+    RosterEntry,
     Round,
     SessionParticipant,
     User,
@@ -146,7 +150,13 @@ def participation_report(db: Session, session: QuizSession) -> list[dict]:
 
     Rows are sorted by name so the table is stable between reloads.
     """
-    rounds = sorted(session.rounds, key=lambda r: (r.question_id, r.phase.value))
+    # A round whose question no longer exists cannot be scored, and must not
+    # take the whole report down with it: earlier builds allowed a used
+    # question to be deleted, so this data exists in the wild.
+    rounds = sorted(
+        (r for r in session.rounds if r.question is not None),
+        key=lambda r: (r.question_id, r.phase.value),
+    )
     correct_choice: dict[int, int | None] = {}
     for round_ in rounds:
         if round_.question_id not in correct_choice:
@@ -202,6 +212,296 @@ def participation_report(db: Session, session: QuizSession) -> list[dict]:
         )
     rows.sort(key=lambda r: (r["display_name"].lower(), r["username"]))
     return rows
+
+
+def semester_participation(
+    db: Session,
+    teacher: User,
+    start: date | None = None,
+    end: date | None = None,
+) -> dict:
+    """Attendance across every session a teacher ran, for end-of-term reporting.
+
+    Answers one question per student per session: did they take part in both
+    bouts? Correctness is deliberately absent — this is the attendance record,
+    not a mark.
+
+    "Took part" means the student answered *both* the pre and the post round
+    of every question that was asked in both bouts in that session. A question
+    that never got its second bout is not counted against anyone, and a
+    session where no question ran both bouts has nothing to attend, reported
+    as None rather than a failure.
+
+    `pairs` is carried alongside the yes/no so a partial attendance is still
+    visible: a strict all-or-nothing verdict would otherwise hide a student
+    who answered three of four questions.
+    """
+    query = (
+        select(QuizSession)
+        .join(Quiz, QuizSession.quiz_id == Quiz.id)
+        .where(Quiz.owner_id == teacher.id)
+        .order_by(QuizSession.created_at, QuizSession.id)
+    )
+    if start is not None:
+        query = query.where(QuizSession.created_at >= datetime.combine(start, time.min))
+    if end is not None:
+        # Inclusive of the end date, which is what a person means by a range.
+        query = query.where(QuizSession.created_at <= datetime.combine(end, time.max))
+    sessions = list(db.scalars(query))
+
+    users: dict[int, User] = {}
+    # user_id -> session_id -> (pairs_completed, pairs_asked)
+    tally: dict[int, dict[int, tuple[int, int]]] = {}
+
+    for session in sessions:
+        # question_id -> phase -> round
+        by_question: dict[int, dict[str, Round]] = {}
+        for round_ in session.rounds:
+            if round_.question is None:
+                continue  # stranded by a question deleted under an older build
+            by_question.setdefault(round_.question_id, {})[round_.phase.value] = round_
+        both_bouts = [
+            phases for phases in by_question.values() if "pre" in phases and "post" in phases
+        ]
+
+        answered_in: dict[int, set[int]] = {}  # round_id -> user ids
+        for phases in by_question.values():
+            for round_ in phases.values():
+                answered_in[round_.id] = {a.user_id for a in round_.answers}
+                for answer in round_.answers:
+                    users[answer.user_id] = answer.user
+
+        for participant in db.scalars(
+            select(SessionParticipant).where(SessionParticipant.session_id == session.id)
+        ):
+            users.setdefault(participant.user_id, participant.user)
+
+        for user_id in users:
+            completed = sum(
+                1
+                for phases in both_bouts
+                if user_id in answered_in[phases["pre"].id]
+                and user_id in answered_in[phases["post"].id]
+            )
+            tally.setdefault(user_id, {})[session.id] = (completed, len(both_bouts))
+
+    rows = []
+    for user_id, user in sorted(users.items(), key=lambda kv: kv[1].username):
+        per_session = []
+        attended = 0
+        for session in sessions:
+            completed, asked = tally.get(user_id, {}).get(session.id, (0, 0))
+            took_part = None if asked == 0 else completed == asked
+            if took_part:
+                attended += 1
+            per_session.append(
+                {"completed": completed, "asked": asked, "took_part": took_part}
+            )
+        rows.append(
+            {
+                "username": user.username,
+                "display_name": user.display_name,
+                "sessions": per_session,
+                "attended": attended,
+            }
+        )
+
+    return {
+        "sessions": [
+            {"code": s.code, "title": s.quiz.title, "date": s.created_at.date().isoformat()}
+            for s in sessions
+        ],
+        "students": rows,
+    }
+
+
+def sync_roster(db: Session, teacher: User, course_id: int, students: list[dict]) -> dict:
+    """Replace the stored roster for a course with what Canvas just reported.
+
+    A sync is a mirror, not an append: students who have dropped the course
+    disappear, which is the point of syncing rather than uploading a
+    spreadsheet once. Removing a roster entry removes nothing else — answers
+    live in their own table and are untouched, so a student who drops still
+    appears in the participation record for the sessions they attended.
+    """
+    existing = {
+        entry.canvas_user_id: entry
+        for entry in db.scalars(
+            select(RosterEntry).where(RosterEntry.course_id == course_id)
+        )
+    }
+    seen: set[int] = set()
+    added = updated = 0
+    now = utcnow()
+
+    for student in students:
+        canvas_user_id = student["canvas_user_id"]
+        seen.add(canvas_user_id)
+        entry = existing.get(canvas_user_id)
+        if entry is None:
+            db.add(
+                RosterEntry(
+                    course_id=course_id,
+                    owner_id=teacher.id,
+                    canvas_user_id=canvas_user_id,
+                    kthid=student.get("kthid"),
+                    username=student["username"],
+                    display_name=student["display_name"],
+                    synced_at=now,
+                )
+            )
+            added += 1
+        else:
+            changed = (
+                entry.kthid != student.get("kthid")
+                or entry.username != student["username"]
+                or entry.display_name != student["display_name"]
+            )
+            entry.kthid = student.get("kthid")
+            entry.username = student["username"]
+            entry.display_name = student["display_name"]
+            entry.synced_at = now
+            entry.owner_id = teacher.id
+            if changed:
+                updated += 1
+
+    removed = 0
+    for canvas_user_id, entry in existing.items():
+        if canvas_user_id not in seen:
+            db.delete(entry)
+            removed += 1
+
+    db.commit()
+    return {
+        "course_id": course_id,
+        "total": len(students),
+        "added": added,
+        "updated": updated,
+        "removed": removed,
+    }
+
+
+def course_roster(db: Session, course_id: int) -> list[RosterEntry]:
+    return list(
+        db.scalars(
+            select(RosterEntry)
+            .where(RosterEntry.course_id == course_id)
+            .order_by(RosterEntry.display_name)
+        )
+    )
+
+
+def roster_courses(db: Session, teacher: User) -> list[dict]:
+    """Courses this teacher has synced, with how many students each holds."""
+    rows = db.execute(
+        select(
+            RosterEntry.course_id,
+            func.count(RosterEntry.id),
+            func.max(RosterEntry.synced_at),
+        )
+        .where(RosterEntry.owner_id == teacher.id)
+        .group_by(RosterEntry.course_id)
+        .order_by(RosterEntry.course_id)
+    ).all()
+    return [
+        {"course_id": course_id, "students": count, "synced_at": synced_at}
+        for course_id, count, synced_at in rows
+    ]
+
+
+def update_question(
+    db: Session,
+    question: Question,
+    text: str,
+    image_url: str | None,
+    choices: list,
+) -> Question:
+    """Edit a question in place, keeping recorded answers readable.
+
+    Choices carrying an `id` are the ones already stored: they are reworded,
+    re-ordered or re-marked. A choice with no id is new. One that is left out
+    is removed — and that is the only move which can destroy data, because an
+    answer points at a choice id. Removing a choice students have picked would
+    leave their answers pointing at nothing and the histogram unable to name
+    what they chose, so it is refused.
+
+    Everything else is allowed even after the question has been asked, typos
+    being the main reason to edit at all. Changing which choice is correct is
+    included on purpose: marking the wrong one is exactly the mistake a
+    teacher needs to fix, and the per-session report then reads correctly.
+    """
+    existing = {c.id: c for c in question.choices}
+    incoming_ids = {c.id for c in choices if c.id is not None}
+
+    unknown = incoming_ids - existing.keys()
+    if unknown:
+        raise RuleViolation("A choice being edited does not belong to this question")
+
+    for choice_id, choice in existing.items():
+        if choice_id in incoming_ids:
+            continue
+        answered = db.scalar(
+            select(func.count()).select_from(Answer).where(Answer.choice_id == choice_id)
+        )
+        if answered:
+            raise RuleViolation(
+                f"“{choice.text}” has already been chosen by students. Reword it "
+                "instead of removing it, or reset the question first to discard "
+                "those answers."
+            )
+
+    question.text = text
+    question.image_url = image_url
+
+    kept: list[Choice] = []
+    for position, incoming in enumerate(choices):
+        if incoming.id is not None:
+            choice = existing[incoming.id]
+            choice.text = incoming.text
+            choice.is_correct = incoming.is_correct
+            choice.position = position
+        else:
+            choice = Choice(
+                question_id=question.id,
+                position=position,
+                text=incoming.text,
+                is_correct=incoming.is_correct,
+            )
+            db.add(choice)
+        kept.append(choice)
+
+    for choice_id, choice in existing.items():
+        if choice_id not in incoming_ids:
+            db.delete(choice)
+
+    db.commit()
+    db.refresh(question)
+    return question
+
+
+def delete_question(db: Session, question: Question) -> None:
+    """Remove a question, unless doing so would destroy recorded answers.
+
+    A question carries no answers itself — they hang off the rounds that asked
+    it — and nothing cascades from a question to its rounds. Deleting one that
+    has been asked therefore leaves the answers in place but strands them:
+    `Round.question` becomes None, and the participation report for *every*
+    session that used the question raises instead of rendering. The answers
+    are the only irreplaceable data here, so refuse.
+
+    Reset the question first if the intent really is to discard its answers.
+    """
+    used_in = db.scalar(
+        select(func.count()).select_from(Round).where(Round.question_id == question.id)
+    )
+    if used_in:
+        raise RuleViolation(
+            "This question has already been asked and has answers recorded. "
+            "Reset it in the session's Control view first if you want to "
+            "discard them."
+        )
+    db.delete(question)
+    db.commit()
 
 
 def reset_question(db: Session, session: QuizSession, question: Question) -> int:

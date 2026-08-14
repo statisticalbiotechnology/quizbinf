@@ -25,6 +25,8 @@ dependencies = [
     "nh3>=0.2.18",
     # Multipart form parsing, for figure uploads.
     "python-multipart>=0.0.9",
+    # Talking to Canvas for the course roster.
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]

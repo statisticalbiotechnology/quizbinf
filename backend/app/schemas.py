@@ -35,6 +35,31 @@ class QuestionIn(BaseModel):
         return self
 
 
+class ChoiceEdit(BaseModel):
+    """A choice in an edit. `id` identifies one that already exists.
+
+    Sent back so the server can tell "the same choice, reworded" from "a new
+    choice" — which matters because answers point at choice ids, and dropping
+    one students have answered would strand their answers.
+    """
+
+    id: int | None = None
+    text: str = Field(min_length=1)
+    is_correct: bool = False
+
+
+class QuestionEdit(BaseModel):
+    text: str = Field(min_length=1)
+    image_url: str | None = None
+    choices: list[ChoiceEdit] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def exactly_one_correct(self) -> "QuestionEdit":
+        if sum(1 for c in self.choices if c.is_correct) != 1:
+            raise ValueError("A question must have exactly one correct choice")
+        return self
+
+
 class QuizIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 

@@ -159,6 +159,38 @@ quizbinf/
   could not verify an in-date cookie, i.e. the session secret is not what
   signed it.
 
+## Canvas: the course roster
+
+Reading the roster is the one piece of Canvas integration that is
+**self-service**: the teacher generates a personal access token at
+`https://canvas.kth.se/profile/settings` (Approved Integrations → New Access
+Token) and sets `CANVAS_TOKEN`. No administrator is involved. The token acts
+as that teacher, so it is a secret: it lives in the config file on the volume,
+never reaches a client, and is never logged.
+
+- `app/canvas.py` reads `GET /api/v1/courses/{id}/users`. **It must follow the
+  `Link: rel="next"` chain** — Canvas caps `per_page` at 100 and reports no
+  total, so a course of 137 students silently returns 100 without it. That is
+  pinned by a test.
+- A sync is a **mirror, not an append**: students who dropped disappear.
+  Removing a roster row removes nothing else — answers live in their own table,
+  so a student who drops still appears in the participation record for the
+  sessions they attended.
+- **`kthid` (Canvas `sis_user_id`, a `u1…` value) is the identifier to match
+  on**, not the username. It survives a username change, and it is the same
+  identifier KTH's own IdP exposes — so a student who authenticates through
+  Canvas today and through KTH later stays one person instead of becoming two.
+  `login_id` (`shiraza@kth.se`) supplies the display username.
+- **Email is deliberately not stored.** Canvas returns it; the app never sends
+  mail, so keeping it would be personal data held for no reason.
+- The roster is personal data: teacher-only endpoints, and the dashboard shows
+  counts rather than names.
+
+The roster also removes a dependency from the *login* work still to come:
+Canvas OAuth2 returns only a Canvas user id, and the roster already maps that
+id to a KTH identity — so the developer key needs no extra API scopes, and a
+valid Canvas login from someone not enrolled can be refused.
+
 ## Deployment: SciLifeLab Serve
 
 Target (decided): **SciLifeLab Serve**, https://serve.scilifelab.se. Serve
@@ -257,6 +289,38 @@ URL so the QR code resolves. See the README.
   choice (`my_choice_id`).
 - **Time/ordering:** the server is the single source of truth for whether a
   round is open; the client must not trust its own clock.
+- **Answers are the only irreplaceable data.** Nothing expires them: sessions,
+  rounds and answers are rows that live as long as the volume does. Two paths
+  can still destroy them, and both are deliberate — the Control view's *reset*
+  (documented above), and deleting a question. The latter used to be silent
+  and much worse than it looked: nothing cascades from a question to the
+  rounds that asked it, so the answers survived while `Round.question` became
+  None, and the participation report for *every* session using that question
+  raised instead of rendering. Deleting a question that has been asked is now
+  refused (409), and the report skips a stranded round rather than failing.
+  See `tests/test_answers_survive.py`. Since the database is a single SQLite
+  file with no backup, exporting `participation.csv` after a lecture is the
+  only real safeguard.
+- **Editing a question follows the same principle.** Text, choice wording,
+  choice order and which choice is correct can all be changed at any time,
+  including after the question has been asked — fixing the wrong answer being
+  marked correct is exactly what editing is for. The one refusal is removing a
+  choice students have already picked, because an answer points at a choice
+  id. Choices therefore carry their id through an edit, so the server can tell
+  a rewording from a replacement. The authoring form is one component
+  (`teacher/question-editor.component.ts`) shared by create and edit, so an
+  edit form cannot quietly become a worse tool than the one that wrote the
+  question. See `tests/test_edit_question.py`.
+- **The term report is attendance, not marking.** `GET /api/reports/
+  participation.csv` spans every session its owner has run and answers one
+  question per student per session: did they answer *both* bouts of every
+  question that was asked twice. Correctness is deliberately absent — it is
+  the participation-credit record. A question that never got its second bout
+  counts against nobody, and a session where no question ran both bouts is
+  blank rather than an absence. A failed cell carries the fraction
+  (`no (1/2)`) so the all-or-nothing rule cannot silently hide a student who
+  answered most of them. Personal data, so teacher-only and labelled
+  do-not-project like the Participants view.
 
 ## Local development
 
@@ -312,6 +376,8 @@ alembic upgrade head
 | `POST /api/auth/mock-login` | dev only | log in without the IdP |
 | `GET /api/auth/login` | all | KTH OIDC flow (**not implemented yet**) |
 | `POST /api/quizzes`, `POST /api/quizzes/{id}/questions` | teacher | author content |
+| `PUT /api/quizzes/{id}/questions/{qid}` | teacher | edit a question; send back the id of every choice kept |
+| `DELETE /api/quizzes/{id}/questions/{qid}` | teacher | delete a question — **409 once it has been asked** |
 | `POST /api/sessions?quiz_id=` | teacher | start a lecture session |
 | `GET /api/sessions/{code}/join-url` | teacher | the URL the QR code encodes |
 | `POST /api/sessions/{code}/rounds` | teacher | open a `pre`/`post` round |
@@ -320,6 +386,11 @@ alembic upgrade head
 | `GET /api/sessions/{code}/participants` | teacher | how many joined (counts only, no names) |
 | `GET /api/sessions/{code}/participation` | teacher | **per-student** correctness (personal data) |
 | `GET /api/sessions/{code}/participation.csv` | teacher | the same as CSV |
+| `GET /api/reports/participation[.csv]?from=&to=` | teacher | **end of term:** attendance across every session, yes/no per session, no correctness |
+| `GET /api/roster/status` | teacher | is Canvas configured, and what has been synced |
+| `GET /api/roster/courses` | teacher | Canvas courses the token's owner teaches |
+| `POST /api/roster/sync?course_id=` | teacher | mirror a course's students into the local roster |
+| `GET /api/roster?course_id=` | teacher | the stored roster (**personal data**) |
 | `GET /api/sessions/{code}/questions/{id}/comparison` | teacher | pre vs post counts |
 | `DELETE /api/sessions/{code}/questions/{id}/rounds` | teacher | reset a question — **discards its answers** so it can be run again |
 | `POST /api/images` | teacher | upload a figure; returns Markdown to paste |
@@ -359,9 +430,8 @@ alembic upgrade head
       Options if this turns out to matter: a per-round code shown only on the
       projected slide and required with the answer, or a short auto-closing
       window. Not built — decide whether it is worth the friction.
-- [ ] **Question editing/reordering and quiz deletion** — only create and
-      delete-question exist today. A question's rounds can be reset (Control
-      view), which discards its answers and lets it be asked again; that is a
-      rehearsal aid, not an editing feature.
+- [ ] **Question reordering and quiz deletion.** Questions can now be created,
+      edited and deleted; reordering them within a quiz, and deleting a whole
+      quiz, are still missing.
 - [ ] Consider showing students the correct answer after the post round
       closes (currently never revealed to them).
