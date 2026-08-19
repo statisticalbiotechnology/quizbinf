@@ -40,7 +40,8 @@ class Throttle:
                 return 0
             return int(remaining) + 1
 
-    def record_failure(self, key: str) -> None:
+    def record(self, key: str) -> None:
+        """Count one attempt against this key."""
         with self._lock:
             count, started = self._failures.get(key, (0, self._now()))
             # A stale window starts over rather than accumulating for ever.
@@ -48,9 +49,17 @@ class Throttle:
                 count, started = 0, self._now()
             self._failures[key] = (count + 1, started)
 
+    # Reads better at the password call site, where an attempt *is* a failure.
+    record_failure = record
+
     def clear(self, key: str) -> None:
         with self._lock:
             self._failures.pop(key, None)
 
 
 teacher_login_throttle = Throttle()
+
+# Roster suggestions: generous enough that typing an address never trips it
+# (a keystroke-debounced field makes a handful of calls), tight enough that
+# scraping the roster prefix by prefix is slow.
+suggest_throttle = Throttle(max_failures=60, lockout=60)

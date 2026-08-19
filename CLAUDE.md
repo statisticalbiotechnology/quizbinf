@@ -180,8 +180,22 @@ of it that assumes the identity is proven.
 - Enabled without a teacher password it is **refused outright**, not run in a
   degraded mode: a blank password would let any student sign in as a teacher.
 - **The login page must not list the class.** A dropdown of enrolled students
-  would publish the roster to anyone who opens the page — the address is typed
-  and checked server-side, and a refusal never says who *is* enrolled.
+  would publish the roster to anyone who opens the page. The field is instead
+  a type-ahead over `GET /api/auth/roster-suggest`, which is deliberately
+  grudging: nothing until three characters, prefix rather than substring, at
+  most eight matches, rate-limited per client, and scoped to
+  `CANVAS_COURSE_ID`. This still leaks the roster to anyone patient enough to
+  try many prefixes — a smaller hole than handing the class over on page load,
+  but a hole, and one more reason to retire this mode. A refusal never says
+  who *is* enrolled.
+- **One device, one student identity** (`DEVICE_BINDING_HOURS`, default 12).
+  An opaque cookie binds a browser to the first identity it claims, so a
+  student cannot sign in as each of their friends in turn on one phone and
+  answer for all of them. It identifies a browser, never a person — no
+  fingerprinting. The binding outlives *logout* deliberately (otherwise
+  signing out would bypass it) and expires on its own so a shared or replaced
+  device recovers without anyone intervening. Teachers are exempt, since a
+  teacher's laptop may legitimately be used to demonstrate the student view.
 - Login and roster sync share one normalisation
   (`canvas.username_from_login_id`); if they disagreed on case or whitespace,
   every match would silently fail.
@@ -403,6 +417,7 @@ alembic upgrade head
 | `POST /api/auth/mock-login` | dev only | log in without the IdP |
 | `GET /api/auth/methods` | all | which login forms this deployment offers |
 | `POST /api/auth/roster-login` | all | **stop-gap:** identify against the roster; teachers need the shared password |
+| `GET /api/auth/roster-suggest?q=` | all | type-ahead over the roster: ≥3 chars, prefix, capped, rate-limited |
 | `GET /api/auth/login` | all | KTH OIDC flow (**not implemented yet**) |
 | `POST /api/quizzes`, `POST /api/quizzes/{id}/questions` | teacher | author content |
 | `PUT /api/quizzes/{id}/questions/{qid}` | teacher | edit a question; send back the id of every choice kept |

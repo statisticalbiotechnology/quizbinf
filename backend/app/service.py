@@ -5,7 +5,7 @@ and when answers are accepted. The server is the single source of truth for
 whether a round is open — clients never decide based on their own clock.
 """
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from .models import (
     Answer,
     Choice,
+    DeviceClaim,
     Phase,
     Question,
     Quiz,
@@ -379,6 +380,81 @@ def sync_roster(db: Session, teacher: User, course_id: int, students: list[dict]
         "updated": updated,
         "removed": removed,
     }
+
+
+# A suggestion list is a way to read the roster, so it is deliberately a poor
+# one: nothing is offered until enough has been typed to be near-specific, and
+# only a handful of matches come back.
+SUGGEST_MIN_CHARS = 3
+SUGGEST_LIMIT = 8
+
+
+def roster_suggestions(db: Session, course_id: int, prefix: str) -> list[str]:
+    """Addresses on the course roster starting with `prefix`.
+
+    Prefix rather than substring, and capped: this endpoint is reachable
+    without logging in, so it must not become a way to page through the class.
+    Someone determined can still enumerate it by trying many prefixes, which
+    is why it is rate-limited at the router — a smaller hole than a dropdown
+    that hands over the whole roster on page load, but a hole.
+    """
+    prefix = (prefix or "").strip().lower()
+    # Typing the domain is natural; match on the part before it.
+    prefix = prefix.split("@", 1)[0]
+    if len(prefix) < SUGGEST_MIN_CHARS:
+        return []
+    entries = db.scalars(
+        select(RosterEntry)
+        .where(
+            RosterEntry.course_id == course_id,
+            RosterEntry.username.startswith(prefix),
+        )
+        .order_by(RosterEntry.username)
+        .limit(SUGGEST_LIMIT)
+    )
+    return [e.username for e in entries]
+
+
+def _as_utc(moment: datetime) -> datetime:
+    """Stored timestamps come back naive from SQLite even for a timezone=True
+    column, and comparing one against an aware `utcnow()` raises. Everything
+    written here is UTC, so labelling it is enough."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+
+
+def device_claim_conflict(
+    db: Session, device_id: str, username: str, window_hours: int
+) -> str | None:
+    """The identity this device is already held to, if it is a different one.
+
+    Returns None when the device is free, or is claiming the same identity
+    again — signing in twice as yourself is not the thing being prevented.
+    """
+    if not device_id or window_hours <= 0:
+        return None
+    claim = db.scalar(select(DeviceClaim).where(DeviceClaim.device_id == device_id))
+    if claim is None:
+        return None
+    if utcnow() - _as_utc(claim.claimed_at) > timedelta(hours=window_hours):
+        return None  # expired; the device is free again
+    return None if claim.username == username else claim.username
+
+
+def record_device_claim(db: Session, device_id: str, username: str) -> None:
+    """Bind a device to an identity, refreshing the window on each sign-in."""
+    if not device_id:
+        return
+    claim = db.scalar(select(DeviceClaim).where(DeviceClaim.device_id == device_id))
+    if claim is None:
+        db.add(DeviceClaim(device_id=device_id, username=username))
+    else:
+        claim.username = username
+        claim.claimed_at = utcnow()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Two tabs signing in at once; the row exists either way.
+        db.rollback()
 
 
 def roster_entry_for(db: Session, username: str) -> RosterEntry | None:

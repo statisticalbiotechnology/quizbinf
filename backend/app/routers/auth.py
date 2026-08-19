@@ -5,7 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from .. import service
-from ..auth import clear_session_cookie, current_user, get_or_create_user, set_session_cookie
+from ..auth import (
+    DEVICE_COOKIE,
+    clear_session_cookie,
+    current_user,
+    get_or_create_user,
+    set_device_cookie,
+    set_session_cookie,
+)
 # The same normalisation the roster sync uses. Shared deliberately: if login
 # lower-cased differently from the sync, every match would silently fail.
 from ..canvas import username_from_login_id as username_from_email
@@ -13,7 +20,7 @@ from ..config import Settings, get_settings
 from ..db import get_db
 from ..models import User
 from ..schemas import MockLoginIn, RosterLoginIn, UserOut
-from ..throttle import teacher_login_throttle
+from ..throttle import suggest_throttle, teacher_login_throttle
 
 log = logging.getLogger("quizbinf")
 
@@ -108,6 +115,21 @@ def roster_login(
         set_session_cookie(response, user.username, settings)
         return user
 
+    # One device, one student identity, for a while. Without this a student
+    # can sign in as each of their friends in turn on the same phone and
+    # answer for all of them — the most obvious way to abuse a login that
+    # asks for no proof.
+    device_id = request.cookies.get(DEVICE_COOKIE) or ""
+    held_by = service.device_claim_conflict(
+        db, device_id, username, settings.device_binding_hours
+    )
+    if held_by is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This device has already been used to sign in as someone else "
+            "today. Use your own phone or laptop, or ask the teacher.",
+        )
+
     entry = service.roster_entry_for(db, username)
     if entry is None:
         # Deliberately the same answer whether the roster is empty or the
@@ -119,8 +141,43 @@ def roster_login(
             "and ask the teacher if you have only just registered.",
         )
     user = get_or_create_user(db, entry.username, entry.display_name, settings)
+    if not device_id:
+        device_id = secrets.token_urlsafe(24)
+        set_device_cookie(response, device_id, settings)
+    service.record_device_claim(db, device_id, user.username)
     set_session_cookie(response, user.username, settings)
     return user
+
+
+@router.get("/roster-suggest")
+def roster_suggest(
+    request: Request,
+    q: str = "",
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Addresses on the course roster beginning with `q`, for the login field.
+
+    Reachable without logging in, so it is deliberately grudging: nothing
+    comes back until enough has been typed to be near-specific, matches are
+    by prefix rather than substring, at most a handful are returned, and
+    asking repeatedly is rate-limited. It still leaks the roster to anyone
+    patient enough to try many prefixes — that is the cost of the convenience,
+    and it is a smaller cost than a dropdown that hands the whole class over
+    on page load.
+    """
+    if not settings.roster_login_allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Roster login is disabled")
+
+    client = request.client.host if request.client else "unknown"
+    if suggest_throttle.locked_for(client):
+        # Quietly empty rather than an error: the field should not break, and
+        # a distinct response would tell a scraper it had been noticed.
+        return {"matches": []}
+    suggest_throttle.record(client)
+
+    usernames = service.roster_suggestions(db, settings.canvas_course_id, q)
+    return {"matches": [f"{u}@kth.se" for u in usernames]}
 
 
 @router.get("/login")

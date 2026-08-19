@@ -58,13 +58,19 @@ def teacher_courses(
 
 @router.post("/sync")
 def sync(
-    course_id: int = Query(...),
+    course_id: int | None = Query(None),
     db: Session = Depends(get_db),
     teacher: User = Depends(current_teacher),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    """Mirror a Canvas course's student list into the local roster."""
+    """Mirror a Canvas course's student list into the local roster.
+
+    Defaults to the course this deployment is configured for, so the common
+    case needs no argument.
+    """
     _require_canvas(settings)
+    if course_id is None:
+        course_id = settings.canvas_course_id
     try:
         students = canvas.list_course_students(
             settings.canvas_base_url, settings.canvas_token, course_id
@@ -76,11 +82,14 @@ def sync(
 
 @router.get("")
 def roster(
-    course_id: int = Query(...),
+    course_id: int | None = Query(None),
     db: Session = Depends(get_db),
     teacher: User = Depends(current_teacher),
+    settings: Settings = Depends(get_settings),
 ) -> list[dict]:
     """The stored roster for a course. Names of real students — do not project."""
+    if course_id is None:
+        course_id = settings.canvas_course_id
     return [
         {
             "canvas_user_id": e.canvas_user_id,

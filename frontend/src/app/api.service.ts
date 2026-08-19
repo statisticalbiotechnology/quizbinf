@@ -46,6 +46,19 @@ export class ApiService {
     return this.http.post(`${API_BASE}/api/auth/logout`, {}, this.opts);
   }
 
+  /**
+   * Roster addresses beginning with what has been typed.
+   *
+   * The server returns nothing for a short prefix and caps the matches, so
+   * this narrows a class rather than downloading one.
+   */
+  rosterSuggest(prefix: string): Observable<{ matches: string[] }> {
+    return this.http.get<{ matches: string[] }>(
+      `${API_BASE}/api/auth/roster-suggest?q=${encodeURIComponent(prefix)}`,
+      this.opts,
+    );
+  }
+
   /** Which login forms this deployment offers. Carries no secret. */
   loginMethods(): Observable<LoginMethods> {
     return this.http.get<LoginMethods>(`${API_BASE}/api/auth/methods`, this.opts);

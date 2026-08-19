@@ -26,11 +26,26 @@ import { AuthService } from '../auth.service';
             id="email"
             type="email"
             name="email"
-            autocomplete="email"
+            autocomplete="off"
             [(ngModel)]="email"
             placeholder="username@kth.se"
-            (keyup.enter)="rosterLogin()"
+            (ngModelChange)="onEmailTyped()"
+            (keydown)="onKey($event)"
           />
+
+          @if (suggestions().length) {
+            <ul class="suggestions">
+              @for (s of suggestions(); track s; let i = $index) {
+                <li
+                  [class.active]="i === highlighted()"
+                  (mousedown)="choose(s)"
+                  (mouseenter)="highlighted.set(i)"
+                >
+                  {{ s }}
+                </li>
+              }
+            </ul>
+          }
 
           <label for="password">Teacher password <span class="opt">— students leave blank</span></label>
           <input
@@ -78,7 +93,12 @@ import { AuthService } from '../auth.service';
       input { display: block; width: 100%; padding: 0.6rem; margin: 0.5rem 0; }
       button { padding: 0.6rem 1.2rem; }
       .kth { display: inline-block; margin-top: 1.5rem; }
-      .roster { text-align: left; }
+      .roster { text-align: left; position: relative; }
+      .suggestions { list-style: none; margin: -0.3rem 0 0; padding: 0;
+                     border: 1px solid var(--border, #ccc); border-radius: 6px;
+                     max-height: 12rem; overflow-y: auto; background: #fff; }
+      .suggestions li { padding: 0.45rem 0.6rem; cursor: pointer; font-size: 0.9rem; }
+      .suggestions li.active, .suggestions li:hover { background: #eef4ff; }
       .roster label { display: block; font-size: 0.85rem; color: #555; margin-top: 0.6rem; }
       .roster .opt { color: #888; font-weight: 400; }
       .roster button { width: 100%; margin-top: 0.8rem; }
@@ -95,6 +115,9 @@ export class LoginComponent implements OnInit {
   error = '';
   busy = signal(false);
   methods = signal<LoginMethods | null>(null);
+  suggestions = signal<string[]>([]);
+  highlighted = signal(-1);
+  private suggestTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     private auth: AuthService,
@@ -110,6 +133,63 @@ export class LoginComponent implements OnInit {
       next: (m) => this.methods.set(m),
       error: () => this.methods.set({ mock_login: false, roster_login: false, oidc: false }),
     });
+  }
+
+  /**
+   * Narrow the roster as the student types.
+   *
+   * Debounced, and the server returns nothing until enough has been typed —
+   * the list is the class, so it is fetched a few matches at a time rather
+   * than handed over whole when the page loads.
+   */
+  onEmailTyped(): void {
+    if (this.suggestTimer) clearTimeout(this.suggestTimer);
+    this.highlighted.set(-1);
+    const typed = this.email.trim();
+    if (typed.length < 3) {
+      this.suggestions.set([]);
+      return;
+    }
+    this.suggestTimer = setTimeout(() => {
+      this.api.rosterSuggest(typed).subscribe({
+        next: ({ matches }) => {
+          // A single exact match is not a suggestion, it is what they typed.
+          this.suggestions.set(matches.length === 1 && matches[0] === typed ? [] : matches);
+        },
+        error: () => this.suggestions.set([]),
+      });
+    }, 200);
+  }
+
+  /** Arrow keys and Enter drive the list, as a picker should. */
+  onKey(event: KeyboardEvent): void {
+    const list = this.suggestions();
+    if (event.key === 'Enter') {
+      const chosen = list[this.highlighted()];
+      if (chosen) {
+        event.preventDefault();
+        this.choose(chosen);
+      } else {
+        this.rosterLogin();
+      }
+      return;
+    }
+    if (!list.length) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      this.highlighted.set((this.highlighted() + 1) % list.length);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      this.highlighted.set((this.highlighted() - 1 + list.length) % list.length);
+    } else if (event.key === 'Escape') {
+      this.suggestions.set([]);
+    }
+  }
+
+  choose(address: string): void {
+    this.email = address;
+    this.suggestions.set([]);
+    this.highlighted.set(-1);
   }
 
   /** Back to whatever sent us here — the scanned session, usually. */

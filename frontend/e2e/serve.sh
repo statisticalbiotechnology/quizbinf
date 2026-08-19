@@ -28,14 +28,25 @@ else
     UVICORN=uvicorn
 fi
 
+if [ -x "$BACKEND/.venv/bin/python" ]; then
+    PYTHON="$BACKEND/.venv/bin/python"
+else
+    PYTHON=python3
+fi
+
 cd "$BACKEND"
-DATABASE_URL="sqlite:///$WORK/e2e.db" \
-DATA_DIR="$WORK" \
-MOCK_LOGIN=true \
-ROSTER_LOGIN=true \
-ROSTER_TEACHER_PASSWORD=e2e-teacher-password \
-ENVIRONMENT=development \
-TEACHER_USERNAMES=teacher \
-SESSION_SECRET=e2e-only-secret \
+export DATABASE_URL="sqlite:///$WORK/e2e.db"
+export DATA_DIR="$WORK"
+export MOCK_LOGIN=true
+export ROSTER_LOGIN=true
+export ROSTER_TEACHER_PASSWORD=e2e-teacher-password
+export ENVIRONMENT=development
+export TEACHER_USERNAMES=teacher
+export SESSION_SECRET=e2e-only-secret
+
+# There is no Canvas here, so put a small roster in directly. Without it the
+# roster login and its type-ahead would have nothing to match against.
+"$PYTHON" "$HERE/seed_roster.py"
+
 exec "$UVICORN" app.main:app --host 127.0.0.1 --port 8020 \
     --proxy-headers --forwarded-allow-ips='*'
