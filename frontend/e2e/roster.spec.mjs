@@ -26,6 +26,31 @@ test('the roster panel explains how to configure Canvas', async ({ page }) => {
   await expect(panel.getByRole('button', { name: /Sync roster/ })).toHaveCount(0);
 });
 
+test('an already-synced roster is still reported without a token', async ({ page }) => {
+  /**
+   * Removing the token after syncing is the recommended state — the roster
+   * lives in the database, not in Canvas. Reporting only "not configured"
+   * made a correctly set up deployment look broken, and gave the teacher no
+   * way to see that their import had in fact worked.
+   */
+  await page.goto('/login');
+  await page.getByPlaceholder('e.g. lukask').fill('teacher');
+  await page.getByRole('button', { name: 'Log in' }).click();
+  await page.waitForURL('**/teacher');
+
+  const panel = page.locator('details.roster');
+  await panel.locator('summary').click();
+
+  // The seeded roster is visible even though Canvas is unreachable.
+  const row = panel.locator('table.synced tr').nth(1);
+  await expect(row).toBeVisible();
+  await expect(row).toContainText('5');
+
+  // And the wording does not imply nothing works.
+  await expect(panel).toContainText('keeps working');
+  await expect(panel).not.toContainText('No roster has been synced yet');
+});
+
 test('the roster panel never exposes the access token', async ({ page }) => {
   const bodies = [];
   page.on('response', async (res) => {
