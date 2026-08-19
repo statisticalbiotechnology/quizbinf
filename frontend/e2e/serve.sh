@@ -32,6 +32,8 @@ cd "$BACKEND"
 DATABASE_URL="sqlite:///$WORK/e2e.db" \
 DATA_DIR="$WORK" \
 MOCK_LOGIN=true \
+ROSTER_LOGIN=true \
+ROSTER_TEACHER_PASSWORD=e2e-teacher-password \
 ENVIRONMENT=development \
 TEACHER_USERNAMES=teacher \
 SESSION_SECRET=e2e-only-secret \

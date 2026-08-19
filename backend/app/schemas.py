@@ -18,6 +18,17 @@ class MockLoginIn(BaseModel):
     display_name: str = ""
 
 
+class RosterLoginIn(BaseModel):
+    """Identification against the course roster.
+
+    `password` is blank for students — they are identified, not
+    authenticated — and is the shared teacher password for a teacher.
+    """
+
+    email: str = Field(min_length=1, max_length=200)
+    password: str = ""
+
+
 class ChoiceIn(BaseModel):
     text: str = Field(min_length=1)
     is_correct: bool = False

@@ -381,6 +381,19 @@ def sync_roster(db: Session, teacher: User, course_id: int, students: list[dict]
     }
 
 
+def roster_entry_for(db: Session, username: str) -> RosterEntry | None:
+    """Find a student by KTH username in any synced roster.
+
+    Any roster, not one named course: the teacher decides what is synced, and
+    a student taking two of their courses should not have to pick which one
+    they are logging in for. Sync only current courses — a stale roster keeps
+    letting last year's students in.
+    """
+    return db.scalar(
+        select(RosterEntry).where(RosterEntry.username == username.strip().lower()).limit(1)
+    )
+
+
 def course_roster(db: Session, course_id: int) -> list[RosterEntry]:
     return list(
         db.scalars(

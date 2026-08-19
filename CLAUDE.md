@@ -159,6 +159,33 @@ quizbinf/
   could not verify an in-date cookie, i.e. the session secret is not what
   signed it.
 
+## Roster-checked identification (a stop-gap)
+
+Every real login route needs an administrator at KTH to grant something, and
+none had by the time the course needed to run. `ROSTER_LOGIN=true` plus
+`ROSTER_TEACHER_PASSWORD=…` turns on a stand-in: a student types their KTH
+address and is let in if it appears in a synced roster.
+
+**This is identification, not authentication.** Anyone who knows a
+classmate's address can answer as them. It is a deliberate, documented gap —
+the submission window remains what stops answering from outside the lecture.
+Retire it the moment a real IdP is available; do not build anything on top
+of it that assumes the identity is proven.
+
+- **Teachers need the shared password**, because the teacher views hold every
+  student's participation record. Teachers come from `TEACHER_USERNAMES`, not
+  from the roster (they are teachers in Canvas, so never appear in a *student*
+  roster). Guessing is rate-limited per client in `app/throttle.py`, which is
+  in-memory and so assumes the single replica the SSE broadcaster already does.
+- Enabled without a teacher password it is **refused outright**, not run in a
+  degraded mode: a blank password would let any student sign in as a teacher.
+- **The login page must not list the class.** A dropdown of enrolled students
+  would publish the roster to anyone who opens the page — the address is typed
+  and checked server-side, and a refusal never says who *is* enrolled.
+- Login and roster sync share one normalisation
+  (`canvas.username_from_login_id`); if they disagreed on case or whitespace,
+  every match would silently fail.
+
 ## Canvas: the course roster
 
 Reading the roster is the one piece of Canvas integration that is
@@ -374,6 +401,8 @@ alembic upgrade head
 | Endpoint | Who | Purpose |
 | --- | --- | --- |
 | `POST /api/auth/mock-login` | dev only | log in without the IdP |
+| `GET /api/auth/methods` | all | which login forms this deployment offers |
+| `POST /api/auth/roster-login` | all | **stop-gap:** identify against the roster; teachers need the shared password |
 | `GET /api/auth/login` | all | KTH OIDC flow (**not implemented yet**) |
 | `POST /api/quizzes`, `POST /api/quizzes/{id}/questions` | teacher | author content |
 | `PUT /api/quizzes/{id}/questions/{qid}` | teacher | edit a question; send back the id of every choice kept |

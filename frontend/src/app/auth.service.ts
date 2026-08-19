@@ -52,6 +52,11 @@ export class AuthService {
     return this.api.mockLogin(username, displayName).pipe(tap((u) => this.user.set(u)));
   }
 
+  /** Identify against the course roster; password is blank for students. */
+  rosterLogin(email: string, password: string): Observable<User> {
+    return this.api.rosterLogin(email, password).pipe(tap((u) => this.user.set(u)));
+  }
+
   logout(): Observable<unknown> {
     return this.api.logout().pipe(tap(() => this.forgetUser()));
   }

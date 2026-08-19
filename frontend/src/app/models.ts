@@ -119,6 +119,13 @@ export interface ChoiceEditInput extends ChoiceInput {
   id?: number;
 }
 
+/** Which login forms a deployment offers. */
+export interface LoginMethods {
+  mock_login: boolean;
+  roster_login: boolean;
+  oidc: boolean;
+}
+
 /** A Canvas course the teacher can sync a roster from. */
 export interface CanvasCourse {
   id: number;
