@@ -43,11 +43,18 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
         @if (rosterStatus(); as status) {
           @if (!status.canvas_configured) {
             <p class="note">
-              Not configured. Generate a personal access token at
+              <strong>No Canvas token set</strong>, so a new sync cannot be run
+              right now. Any roster already synced keeps working — it lives in
+              the database, not in Canvas — so students can still sign in.
+              Removing the token after syncing is the recommended state.
+            </p>
+            <p class="note">
+              To sync again, generate a personal access token at
               <code>{{ status.canvas_base_url }}/profile/settings</code>
-              (Approved Integrations → New Access Token) and set
-              <code>CANVAS_TOKEN</code> in the app's configuration file. The
-              token needs no administrator, and stays on the server.
+              (Approved Integrations → New Access Token), set
+              <code>CANVAS_TOKEN</code> in the app's configuration file and
+              restart. The token needs no administrator, stays on the server,
+              and can be removed again afterwards.
             </p>
           } @else {
             <p class="note">
@@ -85,19 +92,27 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
               </p>
             }
 
-            @if (status.courses.length) {
-              <table class="synced">
-                <tr><th>Course</th><th>Students</th><th>Last synced</th></tr>
-                @for (c of status.courses; track c.course_id) {
-                  <tr>
-                    <td>{{ c.course_id }}</td>
-                    <td>{{ c.students }}</td>
-                    <td>{{ c.synced_at }}</td>
-                  </tr>
-                }
-              </table>
-            }
           }
+
+          <!-- Outside the branch above on purpose: a roster that has already
+               been synced keeps working after the token is removed, and
+               removing it is the recommended thing to do. Hiding this made a
+               correctly configured deployment look broken. -->
+          @if (status.courses.length) {
+            <table class="synced">
+              <tr><th>Course</th><th>Students</th><th>Last synced</th></tr>
+              @for (c of status.courses; track c.course_id) {
+                <tr>
+                  <td>{{ c.course_id }}</td>
+                  <td>{{ c.students }}</td>
+                  <td>{{ c.synced_at }}</td>
+                </tr>
+              }
+            </table>
+          } @else {
+            <p class="note">No roster has been synced yet, so nobody can sign in.</p>
+          }
+
           @if (rosterError()) {
             <p class="error">{{ rosterError() }}</p>
           }
