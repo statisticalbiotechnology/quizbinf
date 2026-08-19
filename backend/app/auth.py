@@ -1,3 +1,5 @@
+import secrets
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request, Response, status
@@ -64,6 +66,26 @@ def set_device_cookie(response: Response, device_id: str, settings: Settings) ->
         httponly=True,
         samesite="lax",
         secure=settings.environment == "production",
+    )
+
+
+def passwords_match(supplied: str | None, configured: str | None) -> bool:
+    """Constant-time password comparison that survives a non-ASCII password.
+
+    Two separate traps, both of which bite a Swedish password:
+
+    `secrets.compare_digest` refuses `str` containing non-ASCII outright, so
+    a password with "ä" raised TypeError and the request failed with a 500
+    before any comparison happened. Comparing UTF-8 *bytes* works.
+
+    And "ä" has two Unicode spellings — one code point (NFC) or "a" plus a
+    combining diaeresis (NFD). macOS often produces NFD while a file written
+    on Linux holds NFC, so the same character typed and stored can differ
+    byte for byte. Normalising both sides first makes them agree.
+    """
+    return secrets.compare_digest(
+        unicodedata.normalize("NFC", supplied or "").encode("utf-8"),
+        unicodedata.normalize("NFC", configured or "").encode("utf-8"),
     )
 
 

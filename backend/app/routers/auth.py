@@ -10,6 +10,7 @@ from ..auth import (
     clear_session_cookie,
     current_user,
     get_or_create_user,
+    passwords_match,
     set_device_cookie,
     set_session_cookie,
 )
@@ -105,8 +106,9 @@ def roster_login(
                 status.HTTP_429_TOO_MANY_REQUESTS,
                 f"Too many attempts. Try again in {wait} seconds.",
             )
-        # Constant-time: a timing difference would leak the password prefix.
-        if not secrets.compare_digest(body.password or "", settings.roster_teacher_password):
+        # Constant-time, and tolerant of a non-ASCII password — see
+        # passwords_match, where both traps are documented.
+        if not passwords_match(body.password, settings.roster_teacher_password):
             teacher_login_throttle.record_failure(client)
             log.warning("roster login: wrong teacher password for %s", username)
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong teacher password")
