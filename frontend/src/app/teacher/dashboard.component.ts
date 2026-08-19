@@ -63,7 +63,13 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                     {{ coursesLoading() ? 'Loading…' : 'Choose a course' }}
                   </option>
                   @for (c of canvasCourses(); track c.id) {
-                    <option [ngValue]="c.id">{{ c.name }}</option>
+                    <!-- Unpublished and finished courses are listed too — a
+                         course being prepared is exactly when its roster is
+                         wanted — but labelled, since picking the wrong one
+                         syncs the wrong class with no other clue. -->
+                    <option [ngValue]="c.id">
+                      {{ c.name }}{{ c.state && c.state !== 'available' ? ' (' + c.state + ')' : '' }}
+                    </option>
                   }
                 </select>
               </label>

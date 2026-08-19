@@ -89,22 +89,48 @@ def username_from_login_id(login_id: str | None) -> str | None:
     return login_id.split("@", 1)[0].strip().lower() or None
 
 
+# Everything except "deleted". Stated explicitly rather than relying on the
+# default, which differs by enrolment type — and asking only for "available"
+# hides a course that has not been published yet, which is exactly the state a
+# course is in while the teacher is preparing it.
+COURSE_STATES = ["unpublished", "available", "completed"]
+
+
 def list_teacher_courses(base_url: str, token: str) -> list[dict]:
-    """Courses the token's owner teaches, newest first, for picking one."""
+    """Courses the token's owner teaches, for picking one to sync."""
     courses = _get_all(
         f"{base_url.rstrip('/')}/api/v1/courses",
         token,
-        params={"enrollment_type": "teacher", "per_page": PAGE_SIZE, "state[]": "available"},
+        params={
+            "enrollment_type": "teacher",
+            "per_page": PAGE_SIZE,
+            "state[]": COURSE_STATES,
+        },
     )
     return [
-        {"id": c["id"], "name": c.get("name") or f"Course {c['id']}", "code": c.get("course_code")}
+        {
+            "id": c["id"],
+            "name": c.get("name") or f"Course {c['id']}",
+            "code": c.get("course_code"),
+            # Surfaced so an unpublished course is visibly distinct: picking
+            # the wrong one syncs the wrong roster with no other clue.
+            "state": c.get("workflow_state"),
+        }
         for c in courses
         if c.get("id") is not None
     ]
 
 
+# Teaching assistants are included alongside students so the teacher has
+# someone to test a lecture with: a TA can then sign in exactly as a student
+# does. They are a separate Canvas enrolment type, so asking only for
+# "student" leaves them out. Teachers are deliberately *not* here — they hold
+# every student's participation record and sign in with the shared password.
+ROSTER_ENROLMENT_TYPES = ["student", "ta"]
+
+
 def list_course_students(base_url: str, token: str, course_id: int) -> list[dict]:
-    """Students enrolled in a course, as identity records.
+    """People who may answer in a course: students and TAs, as identity records.
 
     Email is requested but not returned: the app never sends mail, so storing
     it would be personal data kept for no reason. Anyone without a usable
@@ -113,7 +139,7 @@ def list_course_students(base_url: str, token: str, course_id: int) -> list[dict
     raw = _get_all(
         f"{base_url.rstrip('/')}/api/v1/courses/{course_id}/users",
         token,
-        params={"enrollment_type[]": "student", "per_page": PAGE_SIZE},
+        params={"enrollment_type[]": ROSTER_ENROLMENT_TYPES, "per_page": PAGE_SIZE},
     )
 
     students: list[dict] = []
