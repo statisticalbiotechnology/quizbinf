@@ -213,6 +213,17 @@ never reaches a client, and is never logged.
   `Link: rel="next"` chain** — Canvas caps `per_page` at 100 and reports no
   total, so a course of 137 students silently returns 100 without it. That is
   pinned by a test.
+- **TAs are synced alongside students** (`ROSTER_ENROLMENT_TYPES`), so the
+  teacher has someone who can sign in exactly as a student does and rehearse a
+  lecture. They are indistinguishable from students afterwards, including in
+  the attendance export — filter them out there by username if it matters.
+  Teachers are deliberately excluded: they hold every student's participation
+  record and sign in with the shared password.
+- **Course listing includes unpublished courses.** Asking Canvas for
+  `state[]=available` returns published courses only, which hides a course
+  still being prepared — exactly when its roster is wanted. The three
+  non-deleted states are requested explicitly, and `workflow_state` is carried
+  through so the dropdown can label anything not currently running.
 - A sync is a **mirror, not an append**: students who dropped disappear.
   Removing a roster row removes nothing else — answers live in their own table,
   so a student who drops still appears in the participation record for the

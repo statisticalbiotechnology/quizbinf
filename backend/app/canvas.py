@@ -121,8 +121,16 @@ def list_teacher_courses(base_url: str, token: str) -> list[dict]:
     ]
 
 
+# Teaching assistants are included alongside students so the teacher has
+# someone to test a lecture with: a TA can then sign in exactly as a student
+# does. They are a separate Canvas enrolment type, so asking only for
+# "student" leaves them out. Teachers are deliberately *not* here — they hold
+# every student's participation record and sign in with the shared password.
+ROSTER_ENROLMENT_TYPES = ["student", "ta"]
+
+
 def list_course_students(base_url: str, token: str, course_id: int) -> list[dict]:
-    """Students enrolled in a course, as identity records.
+    """People who may answer in a course: students and TAs, as identity records.
 
     Email is requested but not returned: the app never sends mail, so storing
     it would be personal data kept for no reason. Anyone without a usable
@@ -131,7 +139,7 @@ def list_course_students(base_url: str, token: str, course_id: int) -> list[dict
     raw = _get_all(
         f"{base_url.rstrip('/')}/api/v1/courses/{course_id}/users",
         token,
-        params={"enrollment_type[]": "student", "per_page": PAGE_SIZE},
+        params={"enrollment_type[]": ROSTER_ENROLMENT_TYPES, "per_page": PAGE_SIZE},
     )
 
     students: list[dict] = []
