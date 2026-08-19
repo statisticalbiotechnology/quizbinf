@@ -7,6 +7,7 @@ import {
   CanvasCourse,
   Comparison,
   Histogram,
+  LoginMethods,
   LiveCount,
   Participants,
   ParticipationReport,
@@ -43,6 +44,36 @@ export class ApiService {
   }
   logout(): Observable<unknown> {
     return this.http.post(`${API_BASE}/api/auth/logout`, {}, this.opts);
+  }
+
+  /**
+   * Roster addresses beginning with what has been typed.
+   *
+   * The server returns nothing for a short prefix and caps the matches, so
+   * this narrows a class rather than downloading one.
+   */
+  rosterSuggest(prefix: string): Observable<{ matches: string[] }> {
+    return this.http.get<{ matches: string[] }>(
+      `${API_BASE}/api/auth/roster-suggest?q=${encodeURIComponent(prefix)}`,
+      this.opts,
+    );
+  }
+
+  /** Which login forms this deployment offers. Carries no secret. */
+  loginMethods(): Observable<LoginMethods> {
+    return this.http.get<LoginMethods>(`${API_BASE}/api/auth/methods`, this.opts);
+  }
+
+  /**
+   * Identify a student against the synced course roster, or a teacher with
+   * the shared password. A stop-gap until a real identity provider exists.
+   */
+  rosterLogin(email: string, password: string): Observable<User> {
+    return this.http.post<User>(
+      `${API_BASE}/api/auth/roster-login`,
+      { email, password },
+      this.opts,
+    );
   }
 
   /** Liveness, and whether data written here survives a restart. */

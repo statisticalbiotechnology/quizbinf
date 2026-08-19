@@ -56,5 +56,12 @@ export const routes: Routes = [
       },
     ],
   },
-  { path: '', pathMatch: 'full', redirectTo: 'login' },
+  {
+    // Not a redirect to /login: a student who signs in with nowhere
+    // particular to go would otherwise be bounced back to the form they had
+    // just filled in, which reads as a failed login.
+    path: '',
+    pathMatch: 'full',
+    loadComponent: () => import('./home.component').then((m) => m.HomeComponent),
+  },
 ];

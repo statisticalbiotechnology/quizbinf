@@ -49,6 +49,24 @@ def clear_session_cookie(response: Response) -> None:
     response.delete_cookie(COOKIE_NAME)
 
 
+# Identifies a browser, never a person: an opaque random value, with nothing
+# derived from the device itself. Deliberately outlives the session cookie, so
+# signing out does not release the device to claim a different identity.
+DEVICE_COOKIE = "quizbinf_device"
+DEVICE_COOKIE_MAX_AGE = 180 * 24 * 3600
+
+
+def set_device_cookie(response: Response, device_id: str, settings: Settings) -> None:
+    response.set_cookie(
+        DEVICE_COOKIE,
+        device_id,
+        max_age=DEVICE_COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        secure=settings.environment == "production",
+    )
+
+
 def get_or_create_user(db: Session, username: str, display_name: str, settings: Settings) -> User:
     role = Role.teacher if username in settings.teachers else Role.student
     user = db.scalar(select(User).where(User.username == username))

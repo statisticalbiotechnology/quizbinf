@@ -67,6 +67,20 @@ def log_startup_summary() -> None:
             "allow it (development only).",
             VOLUME_ENV_FILE,
         )
+    if s.roster_login_allowed:
+        log.warning(
+            "ROSTER LOGIN IS ENABLED: students are identified against the synced "
+            "roster with no password, so anyone who knows a classmate's KTH "
+            "address can answer as them. Intended as a stop-gap until a real "
+            "identity provider is available."
+        )
+    elif s.roster_login:
+        log.error(
+            "ROSTER_LOGIN is set but ROSTER_TEACHER_PASSWORD is empty, so roster "
+            "login is refused: without it nobody could reach the teacher views, "
+            "and a blank password would let any student claim to be a teacher."
+        )
+
     log.info("teacher usernames configured: %d", len(s.teachers))
     if not s.teachers:
         log.warning("no TEACHER_USERNAMES set: every user will be a student")

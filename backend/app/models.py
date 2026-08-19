@@ -80,6 +80,31 @@ class RosterEntry(Base):
     owner: Mapped[User] = relationship()
 
 
+class DeviceClaim(Base):
+    """Which student identity a browser has claimed, and when.
+
+    Roster identification has one obvious hole: nothing stops a student
+    signing in as three classmates in turn and answering for all of them. A
+    device that has claimed one identity is held to it for a while, which
+    closes that hole without preventing anything legitimate — a student
+    answers from their own phone as themselves.
+
+    It does not stop a *different* device claiming someone else's address.
+    Only real authentication does that.
+
+    The id is an opaque random value in a cookie. It identifies a browser,
+    never a person: there is no fingerprinting here, and nothing about the
+    device is recorded beyond this identifier.
+    """
+
+    __tablename__ = "device_claims"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Quiz(Base):
     __tablename__ = "quizzes"
 
