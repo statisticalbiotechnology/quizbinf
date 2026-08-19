@@ -89,15 +89,33 @@ def username_from_login_id(login_id: str | None) -> str | None:
     return login_id.split("@", 1)[0].strip().lower() or None
 
 
+# Everything except "deleted". Stated explicitly rather than relying on the
+# default, which differs by enrolment type — and asking only for "available"
+# hides a course that has not been published yet, which is exactly the state a
+# course is in while the teacher is preparing it.
+COURSE_STATES = ["unpublished", "available", "completed"]
+
+
 def list_teacher_courses(base_url: str, token: str) -> list[dict]:
-    """Courses the token's owner teaches, newest first, for picking one."""
+    """Courses the token's owner teaches, for picking one to sync."""
     courses = _get_all(
         f"{base_url.rstrip('/')}/api/v1/courses",
         token,
-        params={"enrollment_type": "teacher", "per_page": PAGE_SIZE, "state[]": "available"},
+        params={
+            "enrollment_type": "teacher",
+            "per_page": PAGE_SIZE,
+            "state[]": COURSE_STATES,
+        },
     )
     return [
-        {"id": c["id"], "name": c.get("name") or f"Course {c['id']}", "code": c.get("course_code")}
+        {
+            "id": c["id"],
+            "name": c.get("name") or f"Course {c['id']}",
+            "code": c.get("course_code"),
+            # Surfaced so an unpublished course is visibly distinct: picking
+            # the wrong one syncs the wrong roster with no other clue.
+            "state": c.get("workflow_state"),
+        }
         for c in courses
         if c.get("id") is not None
     ]

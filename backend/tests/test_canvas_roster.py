@@ -88,6 +88,37 @@ def test_the_token_is_sent_as_a_bearer_header(mock_canvas):
     assert seen["auth"] == "Bearer sekrit"
 
 
+def test_an_unpublished_course_can_still_be_picked(mock_canvas):
+    """A course being prepared is unpublished, which is precisely when the
+    teacher wants to sync its roster and try the quiz out."""
+    asked = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked["states"] = request.url.params.get_list("state[]")
+        return httpx.Response(
+            200,
+            json=[
+                {"id": 63598, "name": "Bioinformatics", "course_code": "DD2404",
+                 "workflow_state": "unpublished"},
+                {"id": 111, "name": "Old course", "course_code": "OLD",
+                 "workflow_state": "completed"},
+                {"id": 222, "name": "Running course", "course_code": "RUN",
+                 "workflow_state": "available"},
+            ],
+        )
+
+    mock_canvas(handler)
+    courses = canvas.list_teacher_courses("https://canvas.kth.se", "tok")
+
+    # Asking only for "available" is what hid the unpublished course.
+    assert set(asked["states"]) == {"unpublished", "available", "completed"}
+    assert "deleted" not in asked["states"]
+
+    assert [c["id"] for c in courses] == [63598, 111, 222]
+    # The state comes back so an unpublished course is visibly distinct.
+    assert courses[0]["state"] == "unpublished"
+
+
 def test_a_user_without_a_login_id_is_skipped_not_guessed(mock_canvas):
     """Storing them under an invented username would put a wrong name in the
     participation record."""

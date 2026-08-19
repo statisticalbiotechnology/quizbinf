@@ -131,6 +131,8 @@ export interface CanvasCourse {
   id: number;
   name: string;
   code: string | null;
+  /** Canvas workflow_state: "unpublished" | "available" | "completed". */
+  state: string | null;
 }
 
 export interface SyncedCourse {
