@@ -69,6 +69,44 @@ def set_device_cookie(response: Response, device_id: str, settings: Settings) ->
     )
 
 
+# Carries the in-progress OIDC login: the CSRF state, the PKCE verifier and
+# where to return to. Signed rather than stored server-side, so a login
+# survives a restart and needs no shared state across replicas.
+FLOW_COOKIE = "quizbinf_oidc"
+FLOW_MAX_AGE = 600
+
+
+def _flow_serializer(settings: Settings) -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(settings.resolved_session_secret, salt="quizbinf-oidc")
+
+
+def set_flow_cookie(response: Response, flow: dict, settings: Settings) -> None:
+    response.set_cookie(
+        FLOW_COOKIE,
+        _flow_serializer(settings).dumps(flow),
+        max_age=FLOW_MAX_AGE,
+        httponly=True,
+        # The provider redirects the browser back to us, which is a top-level
+        # cross-site navigation — "strict" would drop the cookie exactly then.
+        samesite="lax",
+        secure=settings.environment == "production",
+    )
+
+
+def read_flow_cookie(request: Request, settings: Settings) -> dict | None:
+    token = request.cookies.get(FLOW_COOKIE)
+    if not token:
+        return None
+    try:
+        return _flow_serializer(settings).loads(token, max_age=FLOW_MAX_AGE)
+    except BadSignature:
+        return None
+
+
+def clear_flow_cookie(response: Response) -> None:
+    response.delete_cookie(FLOW_COOKIE)
+
+
 def passwords_match(supplied: str | None, configured: str | None) -> bool:
     """Constant-time password comparison that survives a non-ASCII password.
 

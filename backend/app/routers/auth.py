@@ -4,14 +4,19 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
-from .. import service
+from starlette.responses import RedirectResponse
+
+from .. import oidc, service
 from ..auth import (
     DEVICE_COOKIE,
+    clear_flow_cookie,
     clear_session_cookie,
     current_user,
     get_or_create_user,
     passwords_match,
+    read_flow_cookie,
     set_device_cookie,
+    set_flow_cookie,
     set_session_cookie,
 )
 # The same normalisation the roster sync uses. Shared deliberately: if login
@@ -20,12 +25,33 @@ from ..canvas import username_from_login_id as username_from_email
 from ..config import Settings, get_settings
 from ..db import get_db
 from ..models import User
+from ..public_base import public_base_url
 from ..schemas import MockLoginIn, RosterLoginIn, UserOut
 from ..throttle import suggest_throttle, teacher_login_throttle
 
 log = logging.getLogger("quizbinf")
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# The path registered with KTH IT. Changing it needs a form and a wait, so it
+# is derived from the public base URL rather than configured separately —
+# there is no way for the two to drift apart.
+CALLBACK_PATH = "/api/auth/callback"
+
+
+def _redirect_uri(request: Request, settings: Settings) -> str:
+    return public_base_url(request, settings) + CALLBACK_PATH
+
+
+def _safe_next(target: str) -> str:
+    """Only ever return to a path on this site.
+
+    An open redirect here would let a crafted login link bounce a student to
+    another host carrying the impression that quizbinf sent them there.
+    """
+    if not target.startswith("/") or target.startswith("//"):
+        return "/"
+    return target
 
 
 @router.get("/me", response_model=UserOut)
@@ -67,7 +93,7 @@ def login_methods(settings: Settings = Depends(get_settings)) -> dict:
     return {
         "mock_login": settings.mock_login_allowed,
         "roster_login": settings.roster_login_allowed,
-        "oidc": False,
+        "oidc": settings.oidc_configured,
     }
 
 
@@ -183,12 +209,123 @@ def roster_suggest(
 
 
 @router.get("/login")
-def oidc_login() -> None:
-    """Placeholder for the KTH OIDC authorization-code flow.
+def oidc_login(
+    request: Request,
+    next: str = "/",
+    settings: Settings = Depends(get_settings),
+) -> RedirectResponse:
+    """Start the KTH OIDC authorization-code flow.
 
-    Implement once client registration with KTH IT is done (see CLAUDE.md).
+    The state, the PKCE verifier and where to return to are carried in a
+    short-lived signed cookie rather than server-side, so the flow survives a
+    restart mid-login and needs no shared store if this ever runs on more
+    than one replica.
     """
-    raise HTTPException(
-        status.HTTP_501_NOT_IMPLEMENTED,
-        "KTH OIDC login is not configured yet; use mock login in development",
+    if not settings.oidc_configured:
+        raise HTTPException(
+            status.HTTP_501_NOT_IMPLEMENTED,
+            "OIDC login is not configured. Set OIDC_ISSUER, OIDC_CLIENT_ID and "
+            "OIDC_CLIENT_SECRET once KTH IT has registered the application.",
+        )
+    try:
+        document = oidc.discover(settings.oidc_issuer)
+    except oidc.OidcError as e:
+        log.error("oidc: discovery failed: %s", e)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
+
+    state = secrets.token_urlsafe(24)
+    verifier, challenge = oidc.make_pkce() if settings.oidc_use_pkce else (None, None)
+
+    response = RedirectResponse(
+        oidc.authorization_url(
+            document,
+            settings.oidc_client_id,
+            _redirect_uri(request, settings),
+            settings.oidc_scopes,
+            state,
+            challenge,
+        ),
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
     )
+    set_flow_cookie(
+        response,
+        {"state": state, "verifier": verifier, "next": _safe_next(next)},
+        settings,
+    )
+    return response
+
+
+@router.get("/callback")
+def oidc_callback(
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+) -> RedirectResponse:
+    """Where the provider sends the student back, signed in or not."""
+    if not settings.oidc_configured:
+        raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, "OIDC login is not configured")
+
+    if error:
+        # The provider declined; say so on the login page rather than showing
+        # a raw error document.
+        log.warning("oidc: provider returned %s: %s", error, error_description)
+        return RedirectResponse("/login?error=oidc", status_code=status.HTTP_303_SEE_OTHER)
+
+    flow = read_flow_cookie(request, settings)
+    if flow is None or not state or not secrets.compare_digest(state, flow.get("state", "")):
+        # A mismatched or missing state is the CSRF check doing its job, and
+        # also what a bookmarked callback URL looks like.
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Login session expired; try again")
+    if not code:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No authorization code returned")
+
+    try:
+        document = oidc.discover(settings.oidc_issuer)
+        tokens = oidc.exchange_code(
+            document,
+            code,
+            _redirect_uri(request, settings),
+            settings.oidc_client_id,
+            settings.oidc_client_secret,
+            flow.get("verifier"),
+        )
+    except oidc.OidcError as e:
+        log.error("oidc: %s", e)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
+
+    id_token = tokens.get("id_token")
+    if not id_token:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "No ID token in the token response")
+    try:
+        claims = oidc.claims_from_id_token(
+            id_token, settings.oidc_issuer, settings.oidc_client_id
+        )
+    except oidc.OidcError as e:
+        log.error("oidc: %s", e)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
+
+    username = oidc.username_from_claims(claims, settings.oidc_username_claim)
+    if not username:
+        log.error("oidc: no username claim; got %s", sorted(claims))
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "The identity provider returned no username claim",
+        )
+
+    # The roster knows this person's name already; the IdP's is a fallback.
+    entry = service.roster_entry_for(db, username)
+    display_name = oidc.display_name_from_claims(
+        claims, entry.display_name if entry else username
+    )
+    user = get_or_create_user(db, username, display_name, settings)
+
+    response = RedirectResponse(
+        flow.get("next") or "/", status_code=status.HTTP_303_SEE_OTHER
+    )
+    set_session_cookie(response, user.username, settings)
+    clear_flow_cookie(response)
+    return response

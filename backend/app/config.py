@@ -113,6 +113,15 @@ class Settings(BaseSettings):
     oidc_issuer: str = ""
     oidc_client_id: str = ""
     oidc_client_secret: str = ""
+    # KTH supports only these two (per KTH IT), and recommends the
+    # authorization-code flow with a client secret.
+    oidc_scopes: str = "openid allatclaims"
+    # PKCE is sent by default and is harmless where it is ignored, but it can
+    # be switched off if the provider rejects the extra parameters.
+    oidc_use_pkce: bool = True
+    # Which claim carries the KTH username. `allatclaims` returns several, and
+    # the fallbacks below cover the usual spellings.
+    oidc_username_claim: str = "username"
 
     @property
     def teachers(self) -> set[str]:
@@ -125,6 +134,10 @@ class Settings(BaseSettings):
     @property
     def canvas_configured(self) -> bool:
         return bool(self.canvas_token and self.canvas_base_url)
+
+    @property
+    def oidc_configured(self) -> bool:
+        return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_client_secret)
 
     @property
     def roster_login_allowed(self) -> bool:
