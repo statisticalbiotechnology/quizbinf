@@ -116,12 +116,14 @@ class Settings(BaseSettings):
     # KTH supports only these two (per KTH IT), and recommends the
     # authorization-code flow with a client secret.
     oidc_scopes: str = "openid allatclaims"
-    # PKCE is sent by default and is harmless where it is ignored, but it can
-    # be switched off if the provider rejects the extra parameters.
-    oidc_use_pkce: bool = True
-    # Which claim carries the KTH username. `allatclaims` returns several, and
-    # the fallbacks below cover the usual spellings.
-    oidc_username_claim: str = "username"
+    # KTH runs ADFS (https://login.ug.kth.se/adfs), whose discovery document
+    # does not advertise code_challenge_methods_supported — so PKCE is off by
+    # default here. Turn it on for a provider that supports it.
+    oidc_use_pkce: bool = False
+    # Which claim carries the KTH username. ADFS emits `upn`
+    # ("lukask@ug.kth.se"); `unique_name` ("UG\\lukask") is the fallback. Not
+    # `sub`, which KTH issues pairwise and is therefore not a username.
+    oidc_username_claim: str = "upn"
 
     @property
     def teachers(self) -> set[str]:

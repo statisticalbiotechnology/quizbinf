@@ -174,18 +174,37 @@ def claims_from_id_token(id_token: str, issuer: str, client_id: str) -> dict:
     return claims
 
 
-# Spellings seen across providers, in the order they are preferred. KTH's
-# `allatclaims` returns several of these at once.
-USERNAME_CLAIMS = ("username", "preferred_username", "kthid", "sub")
+# Spellings seen across providers, in the order they are preferred. KTH runs
+# ADFS, whose discovery document lists `upn` and `unique_name` and neither of
+# the OIDC-standard spellings, so those come first.
+#
+# `sub` is deliberately absent. KTH's ADFS advertises
+# `subject_types_supported: ["pairwise"]`, which means `sub` is an opaque
+# per-client identifier rather than a username. Falling back to it would sign
+# people in under a meaningless key that matches no roster entry and
+# fragments their participation record — worse than refusing, because it
+# fails silently and is awkward to unpick afterwards. If none of these
+# arrive, the caller reports which claims did, and OIDC_USERNAME_CLAIM can
+# name the right one.
+USERNAME_CLAIMS = ("upn", "unique_name", "username", "preferred_username", "kthid")
 
 
 def username_from_claims(claims: dict, preferred: str) -> str | None:
-    """The KTH username, as the stable key the rest of the app uses."""
+    """The KTH username, as the stable key the rest of the app uses.
+
+    Providers qualify usernames in two directions — `lukask@ug.kth.se` from
+    ADFS's `upn`, and `UG\\lukask` from its `unique_name` — so both are
+    reduced to the bare username that the Canvas roster is keyed on.
+    """
     for name in (preferred, *USERNAME_CLAIMS):
         value = claims.get(name)
-        if isinstance(value, str) and value.strip():
-            # An address may arrive where a bare username was expected.
-            return value.split("@", 1)[0].strip().lower()
+        if not isinstance(value, str) or not value.strip():
+            continue
+        bare = value.split("@", 1)[0]  # user@domain
+        bare = bare.rsplit("\\", 1)[-1]  # DOMAIN\user
+        bare = bare.strip().lower()
+        if bare:
+            return bare
     return None
 
 

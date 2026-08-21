@@ -480,6 +480,17 @@ alembic upgrade head
       to switch it on — `GET /api/auth/methods` then reports `oidc: true` and
       the login page offers it. Registered redirect URI:
       `https://quizbinf.serve.scilifelab.se/api/auth/callback`.
+      **KTH runs ADFS**, not a generic OIDC server: issuer
+      `https://login.ug.kth.se/adfs`. Two consequences the defaults now
+      encode. Its discovery document does not advertise
+      `code_challenge_methods_supported`, so PKCE is **off** by default. And
+      it emits `upn` (`lukask@ug.kth.se`) and `unique_name` (`UG\lukask`) —
+      neither of the OIDC-standard username spellings — while `sub` is
+      **pairwise**, an opaque per-client id. `sub` is therefore excluded from
+      the username fallbacks entirely: signing someone in under it would
+      match no roster entry and fragment their participation record, silently.
+      A login carrying no usable claim is refused, and the error names the
+      claims that did arrive so `OIDC_USERNAME_CLAIM` can be set.
       The ID token's signature is deliberately not verified: OIDC Core §3.1.3.7
       permits that when the token comes over the TLS back channel from the
       token endpoint with client authentication, which is this flow. Issuer,
