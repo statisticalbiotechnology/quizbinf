@@ -473,10 +473,18 @@ alembic upgrade head
 
 ## Not built yet (next steps)
 
-- [ ] **KTH OIDC login.** `GET /api/auth/login` returns 501. Implement the
-      authorization-code + PKCE flow against login.kth.se, then call the same
-      `get_or_create_user` + `set_session_cookie` path mock login already uses.
-      Redirect URI will be `<PUBLIC_BASE_URL>/api/auth/callback`.
+- [x] **KTH OIDC login is implemented** (`app/oidc.py`), waiting only on
+      credentials. Authorization code + client secret, with PKCE on by default
+      and switchable off; scopes `openid allatclaims`, which are the two KTH
+      supports. Set `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`
+      to switch it on — `GET /api/auth/methods` then reports `oidc: true` and
+      the login page offers it. Registered redirect URI:
+      `https://quizbinf.serve.scilifelab.se/api/auth/callback`.
+      The ID token's signature is deliberately not verified: OIDC Core §3.1.3.7
+      permits that when the token comes over the TLS back channel from the
+      token endpoint with client authentication, which is this flow. Issuer,
+      audience and expiry *are* checked. Verifying against JWKS is the
+      hardening step if tokens ever arrive from anywhere else.
 - [ ] **Presenter polish:** a full-screen projection mode (large QR, large
       histogram, no chrome).
 - [ ] **Stronger attendance guard.** The open/closed window stops answering

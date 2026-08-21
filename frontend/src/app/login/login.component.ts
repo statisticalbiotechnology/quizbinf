@@ -2,6 +2,7 @@ import { Component, OnInit, signal } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 
+import { API_BASE } from '../api.config';
 import { ApiService } from '../api.service';
 import { LoginMethods } from '../models';
 import { AuthService } from '../auth.service';
@@ -14,6 +15,16 @@ import { AuthService } from '../auth.service';
     <div class="card">
       <h1>quizbinf</h1>
       <p>In-class quiz for the bioinformatics course.</p>
+
+      @if (methods()?.oidc) {
+        <!-- Real authentication, so it goes first and reads as the way in.
+             The server does the whole flow; this is a plain link because it
+             is a browser redirect to KTH, not an API call. -->
+        <a class="kth primary" [href]="oidcUrl()">Log in with your KTH-id</a>
+        @if (loginError) {
+          <p class="error">{{ loginError }}</p>
+        }
+      }
 
       @if (methods()?.roster_login) {
         <!-- Roster identification: a stop-gap until a real identity provider
@@ -82,8 +93,11 @@ import { AuthService } from '../auth.service';
         </div>
       }
 
-      @if (methods() && !methods()!.mock_login && !methods()!.roster_login) {
-        <a class="kth" href="/api/auth/login">Log in with KTH-id</a>
+      @if (methods() && !methods()!.mock_login && !methods()!.roster_login && !methods()!.oidc) {
+        <p class="note">
+          No login method is configured on this deployment. Ask the course
+          teacher.
+        </p>
       }
     </div>
   `,
@@ -92,7 +106,11 @@ import { AuthService } from '../auth.service';
       .card { max-width: 22rem; margin: 3rem auto; padding: 1.5rem; text-align: center; }
       input { display: block; width: 100%; padding: 0.6rem; margin: 0.5rem 0; }
       button { padding: 0.6rem 1.2rem; }
-      .kth { display: inline-block; margin-top: 1.5rem; }
+      .kth { display: inline-block; margin-top: 0.5rem; }
+      .kth.primary { display: block; padding: 0.7rem 1rem; border-radius: 6px;
+                     background: #2c7a51; color: #fff; text-decoration: none;
+                     font-weight: 600; margin-bottom: 0.5rem; }
+      .note { font-size: 0.85rem; color: #666; }
       .roster { text-align: left; position: relative; }
       .suggestions { list-style: none; margin: -0.3rem 0 0; padding: 0;
                      border: 1px solid var(--border, #ccc); border-radius: 6px;
@@ -113,6 +131,7 @@ export class LoginComponent implements OnInit {
   email = '';
   password = '';
   error = '';
+  loginError = '';
   busy = signal(false);
   methods = signal<LoginMethods | null>(null);
   suggestions = signal<string[]>([]);
@@ -126,7 +145,23 @@ export class LoginComponent implements OnInit {
     private route: ActivatedRoute,
   ) {}
 
+  /**
+   * The server-side flow, carrying where to return to. A full page navigation
+   * rather than an HTTP call: the browser has to follow redirects to KTH and
+   * back for the provider's own session cookie to be involved.
+   */
+  oidcUrl(): string {
+    const next = this.route.snapshot.queryParamMap.get('next') || '/';
+    return `${API_BASE}/api/auth/login?next=${encodeURIComponent(next)}`;
+  }
+
   ngOnInit(): void {
+    // The callback sends a declined or failed KTH login back here, so say so
+    // rather than silently showing the form again as if nothing happened.
+    if (this.route.snapshot.queryParamMap.get('error') === 'oidc') {
+      this.loginError = 'KTH login did not complete. Please try again.';
+    }
+
     // Which form to show is the server's business — a deployment may offer
     // roster identification, mock login, or neither.
     this.api.loginMethods().subscribe({
