@@ -98,6 +98,48 @@ export class SessionFeed implements OnDestroy {
     return !(open && open.phase === phase);
   }
 
+  /**
+   * Whether a phase has been run *and halted* for this question.
+   *
+   * One definition, because three views ask the question and they must agree:
+   * Control uses it to grey out a bout that cannot be opened again, Join to
+   * work out which question the class is on, Report to decide when the correct
+   * choice may finally be shown.
+   */
+  ran(q: Question, phase: Phase): boolean {
+    const c = this.comparisons()[q.id];
+    const open = this.openRoundFor(q);
+    if (open && open.phase === phase) return false;
+    return !!c && c[phase] !== null;
+  }
+
+  /**
+   * The question the class is on, for the projected screen.
+   *
+   * In order: whatever round is open; else one that has had its first bout but
+   * not its second (the discussion is happening); else the next one not yet
+   * asked. Null once every question has run both bouts.
+   */
+  currentQuestion(): Question | null {
+    const open = this.openRound();
+    if (open) {
+      return this.questions().find((q) => q.id === open.question_id) ?? null;
+    }
+    const midway = this.questions().find(
+      (q) => this.ran(q, 'pre') && !this.ran(q, 'post'),
+    );
+    return midway ?? this.questions().find((q) => !this.ran(q, 'pre')) ?? null;
+  }
+
+  /** Where that question stands, so the projection can label itself. */
+  stage(): 'pre' | 'post' | 'discuss' | 'waiting' | 'done' {
+    const q = this.currentQuestion();
+    if (!q) return 'done';
+    const open = this.openRoundFor(q);
+    if (open) return open.phase;
+    return this.ran(q, 'pre') ? 'discuss' : 'waiting';
+  }
+
   pct(counts: Record<number, number> | null, choiceId: number, q: Question): number {
     if (!counts) return 0;
     const total = q.choices.reduce((sum, c) => sum + (counts[c.id] || 0), 0);

@@ -83,8 +83,14 @@ test('a question can be edited and the change reaches students', async ({ browse
 
   await expect(quiz.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
   await expect(quiz.getByText('Corrected wording here')).toBeVisible();
+  // The dashboard is on the teacher's screen while the projector is being set
+  // up, so nothing is highlighted until it is asked for.
+  await expect(quiz.locator('li.correct')).toHaveCount(0);
+  await quiz.getByRole('button', { name: 'Show which is correct' }).click();
   // The highlighted choice is the one just marked correct, not the first.
   await expect(quiz.locator('li.correct')).toHaveText('Beta (reworded)');
+  await quiz.getByRole('button', { name: 'Hide the answer' }).click();
+  await expect(quiz.locator('li.correct')).toHaveCount(0);
 
   // A student sees the corrected text, not the typo.
   await quiz.getByRole('button', { name: 'Run session' }).click();

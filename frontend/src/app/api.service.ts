@@ -6,6 +6,7 @@ import { API_BASE } from './api.config';
 import {
   CanvasCourse,
   Comparison,
+  Draw,
   Histogram,
   LoginMethods,
   LiveCount,
@@ -252,6 +253,19 @@ export class ApiService {
     return this.http.get<Comparison>(
       `${API_BASE}/api/sessions/${code}/questions/${questionId}/comparison`,
       this.opts,
+    );
+  }
+
+  /**
+   * Draw students at random from those who answered, to say how they reasoned.
+   *
+   * Names, and nothing else about them: the payload deliberately does not say
+   * what they answered, because these names go on the projector.
+   */
+  discussants(code: string, questionId: number, count = 2): Observable<Draw> {
+    return this.http.get<Draw>(
+      `${API_BASE}/api/sessions/${code}/questions/${questionId}/discussants`,
+      { ...this.opts, params: { count } },
     );
   }
 

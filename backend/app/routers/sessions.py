@@ -354,6 +354,38 @@ def comparison(
     return ComparisonOut(**service.pre_post_comparison(db, session, question))
 
 
+@router.get("/{code}/questions/{question_id}/discussants")
+def discussants(
+    code: str,
+    question_id: int,
+    count: int = 2,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+) -> dict:
+    """Two students, at random, to say how they reasoned.
+
+    The one place besides the Participants view where individuals are named,
+    and the only one meant to be *projected* — so it is worth being exact
+    about what it discloses. It returns who answered, never what they
+    answered: the names go under the whole distribution rather than beside a
+    bar, so being drawn says nothing about which choice a student picked.
+
+    Drawn on request rather than automatically, so the teacher decides when
+    names appear on a screen a lecture hall is looking at, and can draw again
+    if someone is absent.
+    """
+    session = _owned_session(db, code, teacher)
+    question = db.get(Question, question_id)
+    if question is None or question.quiz_id != session.quiz_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Question not found")
+    drawn = service.draw_discussants(db, session, question, max(1, min(count, 5)))
+    # `reel` is only for the spin the projected view plays before the names
+    # settle: it comes from everyone who joined, so it says nothing about who
+    # answered. The draw itself is `names`.
+    names = [u.display_name for u in drawn]
+    return {"names": names, "reel": service.reel_names(db, session, include=names)}
+
+
 # --- student endpoints -----------------------------------------------------
 
 

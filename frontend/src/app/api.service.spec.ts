@@ -6,7 +6,7 @@ import {
 import { TestBed } from '@angular/core/testing';
 
 import { ApiService } from './api.service';
-import { SessionState } from './models';
+import { Draw, SessionState } from './models';
 
 describe('ApiService', () => {
   let api: ApiService;
@@ -44,6 +44,21 @@ describe('ApiService', () => {
     api.sessionState('abc123').subscribe((s) => (received = s));
     http.expectOne((r) => r.url.endsWith('/api/sessions/abc123/state')).flush(state);
     expect(received).toEqual(state);
+  });
+
+  it('asks for two discussants and gets back names only', () => {
+    let received: Draw | undefined;
+    api.discussants('abc123', 7).subscribe((d) => (received = d));
+    const req = http.expectOne((r) =>
+      r.url.endsWith('/api/sessions/abc123/questions/7/discussants'),
+    );
+    expect(req.request.method).toBe('GET');
+    expect(req.request.params.get('count')).toBe('2');
+    req.flush({ names: ['Anna', 'Bo'], reel: ['Anna', 'Bo', 'Cecilia'] });
+    // These names go on the projector; nothing about what they answered
+    // may come with them. `reel` is only what the draw animates through.
+    expect(Object.keys(received!).sort()).toEqual(['names', 'reel']);
+    expect(received!.names).toEqual(['Anna', 'Bo']);
   });
 
   it('opens a round with the requested phase', () => {

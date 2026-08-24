@@ -5,6 +5,8 @@ and when answers are accepted. The server is the single source of truth for
 whether a round is open — clients never decide based on their own clock.
 """
 
+import random
+from collections.abc import Iterable
 from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import func, select
@@ -591,6 +593,78 @@ def delete_question(db: Session, question: Question) -> None:
         )
     db.delete(question)
     db.commit()
+
+
+def draw_discussants(
+    db: Session, session: QuizSession, question: Question, count: int = 2
+) -> list[User]:
+    """Pick students at random from those who answered this question.
+
+    For the peer-instruction step: two people say how they reasoned, then the
+    room discusses. Drawn only from those who actually answered, so nobody is
+    asked to defend a position they never took.
+
+    Returns *who*, never *what* — the caller shows names beside the whole
+    distribution, not beside a bar, so being drawn does not disclose which
+    choice a student picked.
+    """
+    answered = {
+        answer.user_id: answer.user
+        for round_ in session.rounds
+        if round_.question_id == question.id
+        for answer in round_.answers
+    }
+    # Exclude the teacher, who may have answered while testing the view.
+    pool = [user for user in answered.values() if user.id != session.quiz.owner_id]
+    if len(pool) <= count:
+        return sorted(pool, key=lambda u: u.display_name)
+    return random.sample(pool, count)
+
+
+#: How many names the reel gets. Enough for a spin that does not visibly loop,
+#: small enough that a 150-student lecture does not ship a name list per draw.
+REEL_LIMIT = 40
+
+
+def reel_names(
+    db: Session,
+    session: QuizSession,
+    include: Iterable[str] = (),
+    limit: int = REEL_LIMIT,
+) -> list[str]:
+    """Names for the draw to spin through before it settles.
+
+    Deliberately taken from everyone who **joined** the session, not from those
+    who answered this question. The reel is projected, so every name in it is
+    read out to the room: taking it from the joined set means a name flashing
+    past says only "this person is in the lecture", which everyone present can
+    see anyway. Taking it from the answerers would instead publish who answered
+    and, by omission, who did not.
+
+    `include` is the names actually drawn. They are about to be shown in any
+    case, so putting them on the reel discloses nothing further — and it makes
+    the reel a superset of the draw by construction, which is what lets the
+    spin come to rest on the right name. It matters because joining is recorded
+    when a client fetches the state, and a student who somehow answered without
+    that row existing would otherwise be drawn but never appear on the reel.
+
+    Shuffled, so the order says nothing about who joined first.
+    """
+    users = db.scalars(
+        select(User)
+        .join(SessionParticipant, SessionParticipant.user_id == User.id)
+        .where(SessionParticipant.session_id == session.id)
+    ).all()
+    drawn = list(dict.fromkeys(include))
+    others = [
+        u.display_name
+        for u in users
+        if u.id != session.quiz.owner_id and u.display_name not in drawn
+    ]
+    random.shuffle(others)
+    names = drawn + others[: max(0, limit - len(drawn))]
+    random.shuffle(names)
+    return names
 
 
 def reset_question(db: Session, session: QuizSession, question: Question) -> int:

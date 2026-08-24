@@ -41,6 +41,43 @@ Key product requirements:
   only an answer *count* (`GET /api/sessions/{code}/live`, teacher-only,
   count without breakdown); bars for a phase appear once that round is
   closed.
+- **Never show which choice is correct while the question is still live.** The
+  distribution rule above is only half of it: a green tick beside the right
+  answer settles the argument the discussion is supposed to be. So the
+  authoring dashboard marks nothing until the teacher clicks *Show which is
+  correct* (their screen is visible from the room while the projector is being
+  set up), and the Report view marks nothing until the **second** bout has been
+  halted — `revealCorrect()`, not `shown()`. `e2e/projection.spec.mjs` pins
+  both, and it was written to fail against the version that revealed after the
+  first bout.
+- **The question belongs on the projected screen throughout.** The Join view
+  carries `<app-question-panel>`, which shows the question the class is on —
+  while students are still scanning, while a bout is open, and while they argue
+  between the two — with the choices listed and none of them marked. Which
+  question that is comes from `SessionFeed.currentQuestion()`: the open round's,
+  else one with a `pre` but no `post`, else the next unasked.
+- **Two students are drawn to say how they reasoned.** `GET
+  /api/sessions/{code}/questions/{id}/discussants` picks at random from those
+  who answered, and the Report view shows the names under the whole
+  distribution once the teacher clicks *Draw two to explain*. Three properties
+  hold it together: the payload carries **names only**, never the choice, so a
+  projected name discloses no individual answer; it is drawn from answerers, so
+  nobody is asked to defend a position they never took; and the teacher is
+  excluded, since they may have answered while testing the student view. It is
+  a fresh draw each time, so a teacher can redraw when someone is absent. See
+  `tests/test_discussants.py`.
+- **The draw is animated, and the reel is not the draw.** Names roll past and
+  come to rest one slot at a time (`teacher/name-draw.component.ts`) — the
+  pause before each name lands is the point. The result is decided by the
+  server before the first frame, so a slow browser, a closed view or a viewer
+  with `prefers-reduced-motion` still gets the same two people. The names it
+  rolls through (`reel` in the payload, `service.reel_names`) come from
+  everyone who **joined**, never from the subset who answered this question:
+  every name on the reel is projected, and taking it from the joined set means
+  a name flashing past says only "this person is in the lecture". Taking it
+  from the answerers would publish who answered and, by omission, who did not.
+  The drawn names are forced onto the reel so it is a superset by construction
+  and the spin can always land.
 - **Pre/post pairing.** Every answer is stored with the round it belongs to
   (`pre` or `post`) so the two distributions can be compared per question.
 
@@ -447,6 +484,7 @@ alembic upgrade head
 | `POST /api/roster/sync?course_id=` | teacher | mirror a course's students into the local roster |
 | `GET /api/roster?course_id=` | teacher | the stored roster (**personal data**) |
 | `GET /api/sessions/{code}/questions/{id}/comparison` | teacher | pre vs post counts |
+| `GET /api/sessions/{code}/questions/{id}/discussants?count=` | teacher | draw students at random from those who answered — **names only** |
 | `DELETE /api/sessions/{code}/questions/{id}/rounds` | teacher | reset a question — **discards its answers** so it can be run again |
 | `POST /api/images` | teacher | upload a figure; returns Markdown to paste |
 | `POST /api/markdown/preview` | teacher | render Markdown for the authoring preview |
@@ -507,5 +545,8 @@ alembic upgrade head
 - [ ] **Question reordering and quiz deletion.** Questions can now be created,
       edited and deleted; reordering them within a quiz, and deleting a whole
       quiz, are still missing.
-- [ ] Consider showing students the correct answer after the post round
-      closes (currently never revealed to them).
+- [ ] Consider showing students the correct answer **on their own phones**
+      after the post round closes. The projected Report view now marks it once
+      the second bout is halted, so the room is told in class; the student
+      `state` payload still omits `is_correct` deliberately, so anyone who was
+      not looking at the screen has no record of it.

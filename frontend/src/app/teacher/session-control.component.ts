@@ -130,10 +130,7 @@ export class TeacherSessionControlComponent implements OnInit, OnDestroy {
 
   /** A phase that has already been run cannot be opened again. */
   ran(q: Question, phase: Phase): boolean {
-    const counts = this.feed.comparisons()[q.id];
-    const open = this.feed.openRoundFor(q);
-    if (open && open.phase === phase) return false;
-    return !!counts && counts[phase] !== null;
+    return this.feed.ran(q, phase);
   }
 
   open(q: Question, phase: Phase): void {

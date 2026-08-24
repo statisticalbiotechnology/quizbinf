@@ -85,6 +85,19 @@ export interface LiveCount {
   answered: number;
 }
 
+/**
+ * Two students drawn to say how they reasoned.
+ *
+ * `names` is the draw. `reel` is only what the projected view spins through
+ * before it settles: it comes from everyone who joined the session, never from
+ * the subset who answered this question, so a name flashing past discloses
+ * nothing about participation.
+ */
+export interface Draw {
+  names: string[];
+  reel: string[];
+}
+
 export interface Comparison {
   question_id: number;
   pre: Record<number, number> | null;

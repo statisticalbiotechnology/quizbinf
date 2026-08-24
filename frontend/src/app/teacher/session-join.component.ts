@@ -2,20 +2,24 @@ import { Component, OnDestroy, OnInit, signal } from '@angular/core';
 
 import { API_BASE } from '../api.config';
 import { ApiService } from '../api.service';
+import { QuestionPanelComponent } from './question-panel.component';
 import { SessionFeed } from './session-feed.service';
 
 /** How often to refresh the room count while the join screen is projected. */
 const POLL_MS = 3000;
 
 /**
- * The projected join screen: how to get in, and how full the room is.
+ * The projected screen for everything up to the results: how to get in, how
+ * full the room is, and the question the class is on.
  *
- * Deliberately shows nothing about the quiz itself — this is on the projector
- * while students are still arriving.
+ * The question is here because this is the view that stays on the projector —
+ * while students are still scanning, while a bout is open, and while they
+ * discuss between the two. It shows the choices but never which is correct.
  */
 @Component({
   selector: 'app-teacher-session-join',
   standalone: true,
+  imports: [QuestionPanelComponent],
   template: `
     <div class="wrap">
       <img class="qr" [src]="qrSrc" alt="QR code to join this session" />
@@ -35,6 +39,10 @@ const POLL_MS = 3000;
         <p class="connected">{{ connected() }} connected right now</p>
       </div>
     </div>
+
+    <div class="question">
+      <app-question-panel />
+    </div>
   `,
   styles: [
     `
@@ -48,6 +56,8 @@ const POLL_MS = 3000;
       .code { font-size: 1.6rem; letter-spacing: 0.1em; }
       .joined { font-size: 1.6rem; margin-top: 1.5rem; }
       .connected { font-size: 0.85rem; color: #777; margin-top: -0.8rem; }
+      .question { max-width: 46rem; margin: 0 auto 2rem; padding: 1.2rem 1rem 0;
+                  border-top: 1px solid #eee; }
     `,
   ],
 })
