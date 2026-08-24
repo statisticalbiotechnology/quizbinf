@@ -66,6 +66,18 @@ Key product requirements:
   excluded, since they may have answered while testing the student view. It is
   a fresh draw each time, so a teacher can redraw when someone is absent. See
   `tests/test_discussants.py`.
+- **The draw is animated, and the reel is not the draw.** Names roll past and
+  come to rest one slot at a time (`teacher/name-draw.component.ts`) — the
+  pause before each name lands is the point. The result is decided by the
+  server before the first frame, so a slow browser, a closed view or a viewer
+  with `prefers-reduced-motion` still gets the same two people. The names it
+  rolls through (`reel` in the payload, `service.reel_names`) come from
+  everyone who **joined**, never from the subset who answered this question:
+  every name on the reel is projected, and taking it from the joined set means
+  a name flashing past says only "this person is in the lecture". Taking it
+  from the answerers would publish who answered and, by omission, who did not.
+  The drawn names are forced onto the reel so it is a superset by construction
+  and the spin can always land.
 - **Pre/post pairing.** Every answer is stored with the round it belongs to
   (`pre` or `post`) so the two distributions can be compared per question.
 

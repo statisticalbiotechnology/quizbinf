@@ -68,6 +68,15 @@ test('the projected screen shows the question but never the answer too early', a
   await student.goto(sessionPath);
   await expect(student.locator('.waiting')).toBeVisible();
 
+  // A second student who joins but never answers: they must appear on the
+  // reel the draw spins through — it is drawn from the room, not from the
+  // answerers — but must never be the one it lands on.
+  const watcherCtx = await browser.newContext();
+  const watcher = await watcherCtx.newPage();
+  await loginAs(watcher, 'projwatcher');
+  await watcher.goto(sessionPath);
+  await expect(watcher.locator('.waiting')).toBeVisible();
+
   const goto = (name) => teacher.getByRole('link', { name, exact: true }).click();
 
   // --- first bout: the join screen keeps up ---
@@ -99,8 +108,13 @@ test('the projected screen shows the question but never the answer too early', a
 
   // --- drawing someone to explain their reasoning ---
   await teacher.getByRole('button', { name: 'Draw two to explain' }).click();
-  // Only the one student answered, so the draw can only be them.
-  await expect(teacher.locator('.names .who')).toHaveText(['projstudent']);
+  const slot = teacher.locator('app-name-draw .slot');
+  // It rolls first…
+  await expect(slot).toHaveClass(/spinning/);
+  // …and comes to rest on the one student who actually answered, never on the
+  // one who only joined, however long the spin takes.
+  await expect(slot).toHaveClass(/fixed/, { timeout: 15000 });
+  await expect(slot).toHaveText('projstudent');
   await expect(teacher.getByRole('button', { name: 'Draw again' })).toBeVisible();
 
   // --- second bout, then the answer may finally be shown ---
@@ -118,4 +132,5 @@ test('the projected screen shows the question but never the answer too early', a
 
   await teacherCtx.close();
   await studentCtx.close();
+  await watcherCtx.close();
 });

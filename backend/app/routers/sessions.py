@@ -379,7 +379,11 @@ def discussants(
     if question is None or question.quiz_id != session.quiz_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Question not found")
     drawn = service.draw_discussants(db, session, question, max(1, min(count, 5)))
-    return {"names": [u.display_name for u in drawn]}
+    # `reel` is only for the spin the projected view plays before the names
+    # settle: it comes from everyone who joined, so it says nothing about who
+    # answered. The draw itself is `names`.
+    names = [u.display_name for u in drawn]
+    return {"names": names, "reel": service.reel_names(db, session, include=names)}
 
 
 # --- student endpoints -----------------------------------------------------

@@ -63,10 +63,82 @@ def test_the_draw_says_nothing_about_what_they_answered(teacher_client, make_cli
         f"/api/sessions/{code}/questions/{question_id}/discussants"
     ).json()
 
-    assert set(body) == {"names"}
+    assert set(body) == {"names", "reel"}
     assert str(choices[1]) not in teacher_client.get(
         f"/api/sessions/{code}/questions/{question_id}/discussants"
     ).text
+
+
+# --- the reel the projected view spins before the names settle -------------
+
+
+def test_the_reel_is_who_joined_not_who_answered(teacher_client, make_client):
+    """The reel is projected, so every name in it is read out to the room.
+    Taking it from the joined set means a name flashing past says only that
+    the student is in the lecture. Taking it from the answerers would publish
+    who answered and, by omission, who did not."""
+    _, question_id, choices, code = _session(teacher_client)
+
+    answering = make_client()
+    login(answering, "anna")
+    watching = make_client()
+    login(watching, "bo")
+    watching.get(f"/api/sessions/{code}/state")  # joins, never answers
+
+    _run_pre(teacher_client, code, question_id, [(answering, choices[0])])
+
+    body = teacher_client.get(
+        f"/api/sessions/{code}/questions/{question_id}/discussants"
+    ).json()
+
+    assert sorted(body["reel"]) == ["anna", "bo"]
+    # …while the draw itself still comes only from those who answered.
+    assert body["names"] == ["anna"]
+
+
+def test_the_reel_can_always_come_to_rest_on_a_drawn_name(teacher_client, make_client):
+    """A superset by construction — otherwise the spin could not land."""
+    _, question_id, choices, code = _session(teacher_client)
+    clients = []
+    for name in ("a1", "b2", "c3", "d4"):
+        c = make_client()
+        login(c, name)
+        clients.append(c)
+    _run_pre(teacher_client, code, question_id, [(c, choices[0]) for c in clients])
+
+    body = teacher_client.get(
+        f"/api/sessions/{code}/questions/{question_id}/discussants"
+    ).json()
+    assert set(body["names"]) <= set(body["reel"])
+
+
+def test_the_teacher_is_not_on_the_reel_either(teacher_client, make_client):
+    _, question_id, choices, code = _session(teacher_client)
+    student = make_client()
+    login(student, "anna")
+    teacher_client.get(f"/api/sessions/{code}/state")  # the teacher's own view
+    _run_pre(teacher_client, code, question_id, [(student, choices[0])])
+
+    body = teacher_client.get(
+        f"/api/sessions/{code}/questions/{question_id}/discussants"
+    ).json()
+    assert body["reel"] == ["anna"]
+
+
+def test_the_reel_is_capped_for_a_full_lecture(teacher_client, make_client):
+    """A 150-student course must not ship a name list on every draw."""
+    from app import service
+
+    _, question_id, choices, code = _session(teacher_client)
+    for i in range(service.REEL_LIMIT + 5):
+        c = make_client()
+        login(c, f"student{i:03d}")
+        c.get(f"/api/sessions/{code}/state")
+
+    body = teacher_client.get(
+        f"/api/sessions/{code}/questions/{question_id}/discussants"
+    ).json()
+    assert len(body["reel"]) == service.REEL_LIMIT
 
 
 def test_drawing_again_can_give_a_different_pair(teacher_client, make_client):
