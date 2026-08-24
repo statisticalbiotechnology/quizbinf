@@ -5,6 +5,7 @@ and when answers are accepted. The server is the single source of truth for
 whether a round is open — clients never decide based on their own clock.
 """
 
+import random
 from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import func, select
@@ -591,6 +592,32 @@ def delete_question(db: Session, question: Question) -> None:
         )
     db.delete(question)
     db.commit()
+
+
+def draw_discussants(
+    db: Session, session: QuizSession, question: Question, count: int = 2
+) -> list[User]:
+    """Pick students at random from those who answered this question.
+
+    For the peer-instruction step: two people say how they reasoned, then the
+    room discusses. Drawn only from those who actually answered, so nobody is
+    asked to defend a position they never took.
+
+    Returns *who*, never *what* — the caller shows names beside the whole
+    distribution, not beside a bar, so being drawn does not disclose which
+    choice a student picked.
+    """
+    answered = {
+        answer.user_id: answer.user
+        for round_ in session.rounds
+        if round_.question_id == question.id
+        for answer in round_.answers
+    }
+    # Exclude the teacher, who may have answered while testing the view.
+    pool = [user for user in answered.values() if user.id != session.quiz.owner_id]
+    if len(pool) <= count:
+        return sorted(pool, key=lambda u: u.display_name)
+    return random.sample(pool, count)
 
 
 def reset_question(db: Session, session: QuizSession, question: Question) -> int:

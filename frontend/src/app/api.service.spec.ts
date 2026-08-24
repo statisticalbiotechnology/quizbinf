@@ -46,6 +46,20 @@ describe('ApiService', () => {
     expect(received).toEqual(state);
   });
 
+  it('asks for two discussants and gets back names only', () => {
+    let received: { names: string[] } | undefined;
+    api.discussants('abc123', 7).subscribe((d) => (received = d));
+    const req = http.expectOne((r) =>
+      r.url.endsWith('/api/sessions/abc123/questions/7/discussants'),
+    );
+    expect(req.request.method).toBe('GET');
+    expect(req.request.params.get('count')).toBe('2');
+    req.flush({ names: ['Anna', 'Bo'] });
+    // These names go on the projector; nothing about what they answered
+    // may come with them.
+    expect(Object.keys(received!)).toEqual(['names']);
+  });
+
   it('opens a round with the requested phase', () => {
     api.openRound('abc123', 7, 'post').subscribe();
     const req = http.expectOne((r) => r.url.endsWith('/api/sessions/abc123/rounds'));

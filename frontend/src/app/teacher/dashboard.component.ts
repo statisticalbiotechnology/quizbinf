@@ -154,11 +154,20 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                       </button>
                     </span>
                   </div>
+                  <!-- No green marking here. This list is on screen while
+                       the projector is being set up, and a highlighted
+                       correct answer is exactly what must not be read from
+                       the back of the room. Reveal it behind a click. -->
                   <ul>
                     @for (c of q.choices; track c.id) {
-                      <li [class.correct]="c.is_correct">{{ c.text }}</li>
+                      <li [class.correct]="revealed()[q.id] && c.is_correct">
+                        {{ c.text }}
+                      </li>
                     }
                   </ul>
+                  <button type="button" class="reveal" (click)="toggleReveal(q.id)">
+                    {{ revealed()[q.id] ? 'Hide the answer' : 'Show which is correct' }}
+                  </button>
                   @if (deleteError()[q.id]; as msg) {
                     <p class="error">{{ msg }}</p>
                   }
@@ -196,6 +205,8 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
       .quiz { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
       header { display: flex; justify-content: space-between; align-items: center; }
       li.correct { font-weight: 600; color: #2c7; }
+      .reveal { font-size: 0.75rem; padding: 0.15rem 0.45rem; margin-top: 0.2rem;
+                color: #777; background: none; }
       .q-row { display: flex; justify-content: space-between; align-items: flex-start;
                gap: 0.75rem; }
       .q-actions { display: flex; gap: 0.3rem; flex-shrink: 0; }
@@ -225,6 +236,9 @@ export class TeacherDashboardComponent implements OnInit {
   editError = signal('');
   /** Refusals keyed by question id, so each row explains its own failure. */
   deleteError = signal<Record<number, string>>({});
+
+  /** Which questions have had their answer revealed, by explicit click. */
+  revealed = signal<Record<number, boolean>>({});
 
   rosterStatus = signal<RosterStatus | null>(null);
   canvasCourses = signal<CanvasCourse[]>([]);
@@ -307,6 +321,10 @@ export class TeacherDashboardComponent implements OnInit {
         this.syncing.set(false);
       },
     });
+  }
+
+  toggleReveal(questionId: number): void {
+    this.revealed.update((r) => ({ ...r, [questionId]: !r[questionId] }));
   }
 
   semesterCsvUrl(): string {

@@ -255,6 +255,19 @@ export class ApiService {
     );
   }
 
+  /**
+   * Draw students at random from those who answered, to say how they reasoned.
+   *
+   * Names, and nothing else: the payload deliberately does not say what they
+   * answered, because these names go on the projector.
+   */
+  discussants(code: string, questionId: number, count = 2): Observable<{ names: string[] }> {
+    return this.http.get<{ names: string[] }>(
+      `${API_BASE}/api/sessions/${code}/questions/${questionId}/discussants`,
+      { ...this.opts, params: { count } },
+    );
+  }
+
   // --- student ---
   sessionState(code: string): Observable<SessionState> {
     return this.http.get<SessionState>(`${API_BASE}/api/sessions/${code}/state`, this.opts);

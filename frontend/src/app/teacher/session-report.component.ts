@@ -1,5 +1,6 @@
-import { Component } from '@angular/core';
+import { Component, signal } from '@angular/core';
 
+import { ApiService } from '../api.service';
 import { Question } from '../models';
 import { SessionFeed } from './session-feed.service';
 
@@ -8,6 +9,13 @@ import { SessionFeed } from './session-feed.service';
  *
  * A phase appears only once its round is halted, so this view is safe to leave
  * on the projector for a whole question.
+ *
+ * Two things it holds back. Which choice is correct stays hidden until the
+ * second bout has run — the pre distribution is projected *before* the
+ * discussion, and a green tick beside it would settle the argument the
+ * discussion is supposed to be. And the drawn discussants are shown by name
+ * under the whole distribution, never beside a bar, so being called on does
+ * not disclose what that student answered.
  */
 @Component({
   selector: 'app-teacher-session-report',
@@ -35,10 +43,10 @@ import { SessionFeed } from './session-feed.service';
             } @else {
               <div class="hist">
                 @for (ch of q.choices; track ch.id) {
-                  <div class="row" [class.correct]="ch.is_correct">
+                  <div class="row" [class.correct]="revealCorrect(q) && ch.is_correct">
                     <span class="label">
                       {{ ch.text }}
-                      @if (ch.is_correct) { <span class="tick">✓</span> }
+                      @if (revealCorrect(q) && ch.is_correct) { <span class="tick">✓</span> }
                     </span>
                     <span class="bars">
                       @if (feed.showPhase(q, 'pre') && c.pre) {
@@ -63,6 +71,23 @@ import { SessionFeed } from './session-feed.service';
                   <span class="sw post"></span> after discussion
                   ({{ feed.total(c.post) }})
                 </p>
+
+                <div class="draw">
+                  <button type="button" (click)="draw(q)" [disabled]="drawing() === q.id">
+                    {{ hasDraw(q) ? 'Draw again' : 'Draw two to explain' }}
+                  </button>
+                  @if (drawn()[q.id]; as names) {
+                    @if (names.length) {
+                      <p class="names">
+                        @for (n of names; track n) { <span class="who">{{ n }}</span> }
+                      </p>
+                      <p class="ask">…tell us how you reasoned.</p>
+                    } @else {
+                      <p class="nobody">Nobody has answered this question yet.</p>
+                    }
+                  }
+                  @if (drawError(); as e) { <p class="error">{{ e }}</p> }
+                </div>
               </div>
             }
           </section>
@@ -92,12 +117,24 @@ import { SessionFeed } from './session-feed.service';
       .sw.pre { background: #9bd; }
       .sw.post { background: #2c7a51; }
       .legend { font-size: 0.85rem; color: #555; margin-top: 0.8rem; }
+      .draw { margin-top: 0.8rem; }
+      /* Under the whole distribution, and large: these two are being called on. */
+      .names { margin: 0.6rem 0 0; }
+      .who { font-size: 1.6rem; font-weight: 700; margin-right: 1.2rem; }
+      .ask { margin: 0.1rem 0 0; color: #555; }
+      .nobody { color: #777; font-style: italic; }
       .empty { color: #777; }
+      .error { color: #c0392b; }
     `,
   ],
 })
 export class TeacherSessionReportComponent {
-  constructor(public feed: SessionFeed) {}
+  /** Who was drawn, per question. An empty array means nobody answered. */
+  drawn = signal<Record<number, string[]>>({});
+  drawing = signal<number | null>(null);
+  drawError = signal('');
+
+  constructor(public feed: SessionFeed, private api: ApiService) {}
 
   /** Something to show only once at least one phase is closed. */
   shown(q: Question): boolean {
@@ -107,5 +144,36 @@ export class TeacherSessionReportComponent {
       (!!c.pre && this.feed.showPhase(q, 'pre')) ||
       (!!c.post && this.feed.showPhase(q, 'post'))
     );
+  }
+
+  /**
+   * Whether the correct choice may be marked yet.
+   *
+   * Only once the second bout has been halted. Before that this view is
+   * projected between the two bouts, and the point of asking twice is that the
+   * class argues it out rather than reading the answer off the screen.
+   */
+  revealCorrect(q: Question): boolean {
+    return this.feed.ran(q, 'post');
+  }
+
+  /** Whether a draw has already produced names for this question. */
+  hasDraw(q: Question): boolean {
+    return (this.drawn()[q.id] ?? []).length > 0;
+  }
+
+  draw(q: Question): void {
+    this.drawError.set('');
+    this.drawing.set(q.id);
+    this.api.discussants(this.feed.code(), q.id).subscribe({
+      next: ({ names }) => {
+        this.drawn.update((d) => ({ ...d, [q.id]: names }));
+        this.drawing.set(null);
+      },
+      error: () => {
+        this.drawError.set('Could not draw anyone just now.');
+        this.drawing.set(null);
+      },
+    });
   }
 }
