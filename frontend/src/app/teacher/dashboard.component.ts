@@ -146,7 +146,10 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                   />
                 } @else {
                   <div class="q-row">
-                    <span [innerHTML]="q.text_html"></span>
+                    <!-- The qtext class is what the global rules for rendered
+                         question Markdown key on; without it a figure here
+                         draws at its natural pixel size. -->
+                    <span class="qtext" [innerHTML]="q.text_html"></span>
                     <span class="q-actions">
                       <button type="button" (click)="startEdit(q)">Edit</button>
                       <button type="button" class="danger" (click)="removeQuestion(quiz, q)">
@@ -209,6 +212,7 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                 color: #777; background: none; }
       .q-row { display: flex; justify-content: space-between; align-items: flex-start;
                gap: 0.75rem; }
+      .q-row .qtext { min-width: 0; }
       .q-actions { display: flex; gap: 0.3rem; flex-shrink: 0; }
       .q-actions button { font-size: 0.8rem; padding: 0.2rem 0.5rem; }
       .q-actions .danger { color: #c0392b; }

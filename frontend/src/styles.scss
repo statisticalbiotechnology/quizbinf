@@ -41,3 +41,44 @@ textarea {
 a {
   color: var(--accent);
 }
+
+/* Rendered question Markdown.
+ *
+ * These rules must live here, globally, and not in the components that show a
+ * question. The HTML is bound with [innerHTML], so its elements are created
+ * outside the component's template and carry none of Angular's style-scoping
+ * attributes — a rule written inside a component compiles to
+ * `img[_ngcontent-xxx]` and silently matches nothing. That is how a figure
+ * came to render at its natural pixel size in every view at once, phone
+ * included, with the caps apparently in place.
+ *
+ * A teacher sizes an individual figure from the Markdown itself
+ * (`{width=60%}`, a percentage of the column). What follows is only the
+ * backstop that keeps an unsized one inside the column it is in.
+ */
+.qtext,
+.q-text,
+.preview {
+  img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+  }
+
+  pre {
+    overflow-x: auto;
+  }
+
+  table {
+    border-collapse: collapse;
+  }
+}
+
+/* The two list views show every question at once, so a figure is a thumbnail
+ * there rather than the thing being read. */
+app-teacher-session-report,
+app-teacher-session-control {
+  .qtext img {
+    max-width: 22rem;
+  }
+}

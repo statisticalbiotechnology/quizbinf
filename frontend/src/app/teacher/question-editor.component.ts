@@ -47,7 +47,11 @@ export interface QuestionDraft {
           />
           {{ uploading() ? 'Uploading…' : '🖼 Add image' }}
         </label>
-        <span class="md-hint">Markdown supported. Uploads are inserted as an image link.</span>
+        <span class="md-hint">
+          Markdown supported. Uploads are inserted as an image link — add
+          <code>&#123;width=60%&#125;</code> after one to size it, as a
+          percentage of the column it appears in.
+        </span>
       </div>
       @if (uploadError()) {
         <p class="error">{{ uploadError() }}</p>
@@ -115,7 +119,6 @@ export interface QuestionDraft {
                  margin: 0.5rem 0; position: relative; }
       .preview-label { position: absolute; top: -0.6rem; left: 0.6rem; background: #fff;
                        padding: 0 0.3rem; font-size: 0.7rem; color: #888; text-transform: uppercase; }
-      .preview img { max-width: 100%; height: auto; border-radius: 4px; }
       .preview table { border-collapse: collapse; }
       .preview th, .preview td { border: 1px solid #ddd; padding: 0.2rem 0.4rem; }
       .error { color: #c0392b; }
