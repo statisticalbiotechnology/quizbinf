@@ -142,6 +142,25 @@ quizbinf/
   the mounted volume (`<data>/images/`), are teacher-only to upload, capped at
   4 MB, checked against their magic bytes, and given unguessable names. **SVG
   is refused** — it can carry script and would be served from our own origin.
+- **A figure is sized from the Markdown, as a percentage**:
+  `![](/api/images/x.png){width=60%}` is 60% *of the column it appears in*,
+  which is what suits a question read on a phone and projected in a hall from
+  the same source. Pixels (`{width=400}`) work too. It is the general
+  attribute syntax underneath (`mdit_py_plugins.attrs`), so what it may set is
+  restricted to `width`/`height` at parse time, with nh3 as the second gate —
+  keep both. One wrinkle: that parser reads `%` as the start of a comment, so
+  `render()` quotes a bare percentage before parsing; the unquoted spelling is
+  Pandoc's and therefore the one a teacher writes.
+- **CSS for rendered question Markdown must live in `styles.scss`, not in the
+  component.** Question HTML is bound with `[innerHTML]`, so its elements are
+  created outside the component's template and carry none of Angular's
+  style-scoping attributes: a rule written in a component compiles to
+  `img[_ngcontent-xxx]` and matches nothing. Every view had a cap on question
+  figures and not one applied — a 1257px figure drew at 1257px on a 390px
+  phone with all of them apparently in place, unit tests green and `ng build`
+  clean. `e2e/figures.spec.mjs` measures the drawn width against the column
+  instead of asserting a rule exists, and fails against the version that had
+  the rules in the components.
 - **Questions are multiple choice with exactly one correct choice.** Keep the
   model and UI to single-select radio buttons; no free text, no multi-select.
   Nothing is marked correct by default when authoring — a pre-selected first

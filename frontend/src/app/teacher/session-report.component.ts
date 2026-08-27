@@ -100,7 +100,6 @@ import { SessionFeed } from './session-feed.service';
       .wrap { max-width: 46rem; margin: 1.5rem auto; padding: 1rem; }
       .q { border-top: 1px solid #eee; padding: 1rem 0; }
       .qtext { font-weight: 600; font-size: 1.1rem; }
-      .qtext img { max-width: 22rem; height: auto; border-radius: 6px; }
       .qtext :is(p, ul, ol) { display: inline; margin: 0; }
       .pending { color: #777; font-style: italic; }
       .row { display: flex; align-items: center; gap: 0.6rem; margin: 0.5rem 0; }

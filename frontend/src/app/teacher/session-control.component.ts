@@ -72,7 +72,6 @@ const POLL_MS = 2000;
       .halt { margin-left: 0.8rem; background: #c0392b; color: #fff; border-color: #a33; }
       .q { border-top: 1px solid #eee; padding: 0.9rem 0; }
       .qtext { font-weight: 600; margin: 0 0 0.5rem; }
-      .qtext img { max-width: 22rem; height: auto; border-radius: 6px; }
       .qtext :is(p, ul, ol) { display: inline; margin: 0; }
       .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
       .reset { margin-left: auto; color: #8a2b20; border-color: #e6b8b2; }

@@ -50,14 +50,12 @@ import { SessionState } from '../models';
       .wrap { max-width: 30rem; margin: 1.5rem auto; padding: 1rem; }
       .phase { font-weight: 600; color: #2c7; text-transform: uppercase; font-size: 0.8rem; }
       .qtext { font-size: 1.2rem; margin: 0.5rem 0 1rem; }
-      /* Markdown output: keep figures and tables inside the phone screen. */
-      .qtext img { max-width: 100%; height: auto; border-radius: 6px; }
-      .qtext pre { overflow-x: auto; background: #f5f5f5; padding: 0.5rem;
-                   border-radius: 4px; }
+      /* Figures, <pre> and tables in rendered Markdown are sized in
+         styles.scss — a rule written here would not reach them. */
+      .qtext pre { background: #f5f5f5; padding: 0.5rem; border-radius: 4px; }
       .qtext code { background: #f5f5f5; padding: 0.1rem 0.25rem; border-radius: 3px; }
-      .qtext table { border-collapse: collapse; }
       .qtext th, .qtext td { border: 1px solid #ddd; padding: 0.2rem 0.4rem; }
-      img { max-width: 100%; border-radius: 6px; }
+      img { max-width: 100%; height: auto; border-radius: 6px; }
       .choices { display: flex; flex-direction: column; gap: 0.6rem; }
       .choice { padding: 1rem; text-align: left; border: 2px solid #ccc; border-radius: 8px;
                 background: #fff; font-size: 1rem; }

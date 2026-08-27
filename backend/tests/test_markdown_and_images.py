@@ -67,6 +67,52 @@ def test_empty_text_is_harmless():
     assert render("") == ""
 
 
+# --- sizing a figure -------------------------------------------------------
+#
+# A percentage rather than pixels, because the column differs per view: the
+# same question is read on a phone and projected in a lecture hall.
+
+
+def test_a_figure_can_be_sized_as_a_percentage_of_its_column():
+    html = render("![f](/api/images/a.png){width=60%}")
+    assert 'width="60%"' in html
+    assert "{width" not in html, "the attribute block was left in the text"
+
+
+def test_a_bare_percentage_works_because_that_is_what_a_teacher_writes():
+    """The attribute parser reads `%` as the start of a comment, so the bare
+    Pandoc spelling has to be quoted before it reaches the parser. Both forms
+    must end up the same."""
+    assert render("![f](/api/images/a.png){width=60%}") == render(
+        '![f](/api/images/a.png){width="60%"}'
+    )
+
+
+def test_pixels_and_height_work_too():
+    assert 'width="400"' in render("![f](/api/images/a.png){width=400}")
+    html = render("![f](/api/images/a.png){width=60% height=40%}")
+    assert 'width="60%"' in html and 'height="40%"' in html
+
+
+def test_the_attribute_syntax_cannot_smuggle_anything_else_in():
+    """The size syntax is a general attribute syntax underneath, so what it is
+    allowed to set is restricted at parse time — and nh3 is the second gate."""
+    html = render(
+        '![f](/api/images/a.png){onclick="alert(1)" style="position:fixed" '
+        'class="correct" id="x" width=60%}'
+    )
+    assert 'width="60%"' in html
+    for smuggled in ("onclick", "style", "class", "id="):
+        assert smuggled not in html
+
+
+def test_braces_in_a_question_are_left_alone():
+    """Only a block directly after a link or image is treated as attributes;
+    a teacher writing about sets or code should get what they typed."""
+    assert "{width=60%}" in render("The set {width=60%} is not a figure")
+    assert "{A, C, G, T}" in render("The alphabet {A, C, G, T} is the input")
+
+
 # --- exposed through the API ---
 
 

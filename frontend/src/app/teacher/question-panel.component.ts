@@ -37,7 +37,6 @@ import { SessionFeed } from './session-feed.service';
       .stage.open { color: #2c7a51; font-weight: 700; }
       /* Read from the back of the room, so larger than the rest of the app. */
       .qtext { font-size: 1.5rem; font-weight: 600; line-height: 1.35; }
-      .qtext img { max-width: 100%; height: auto; border-radius: 6px; }
       .qtext :is(p, ul, ol) { display: inline; margin: 0; }
       .num { color: #888; margin-right: 0.3rem; }
       .choices { font-size: 1.25rem; line-height: 1.6; margin: 1rem 0 0; padding-left: 1.6rem; }

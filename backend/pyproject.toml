@@ -22,6 +22,9 @@ dependencies = [
     "qrcode>=8.0",
     # Question text is Markdown, rendered and sanitised server-side.
     "markdown-it-py>=3.0",
+    # For `{width=60%}` after a figure; the attribute names it will accept are
+    # restricted at parse time, and nh3 below is the second gate.
+    "mdit-py-plugins>=0.4",
     "nh3>=0.2.18",
     # Multipart form parsing, for figure uploads.
     "python-multipart>=0.0.9",
