@@ -367,3 +367,120 @@ def test_the_canvas_csv_is_teacher_only(student_client, make_client):
     url = "/api/reports/canvas-participation.csv"
     assert student_client.get(url).status_code == 403
     assert make_client().get(url).status_code == 401
+
+
+# --- the same bar, for one lecture -----------------------------------------
+
+
+def _lecture_session(teacher_client, questions: int, answering: dict) -> str:
+    """As `_run_lecture`, but returning the session code to download from."""
+    return _run_lecture(teacher_client, questions, answering)
+
+
+def _session_score(teacher_client, code: str, username: str, query: str = "") -> str:
+    rows = _rows(
+        teacher_client.get(
+            f"/api/sessions/{code}/canvas-participation.csv?course_id=63598{query}"
+        ).text
+    )
+    return next(r for r in rows if r[3] == username)[4]
+
+
+def test_one_lecture_can_be_marked_on_its_own(teacher_client, make_client):
+    """The per-session file: the same 75% bar, scored out of one."""
+    good = make_client()
+    login(good, "sixofeight")
+    poor = make_client()
+    login(poor, "fiveofeight")
+    code = _lecture_session(teacher_client, 4, {good: 6, poor: 5})
+
+    rows = _rows(
+        teacher_client.get(
+            f"/api/sessions/{code}/canvas-participation.csv?course_id=63598"
+        ).text
+    )
+    assert rows[0][:4] == ["Student", "ID", "SIS User ID", "SIS Login ID"]
+    assert rows[1][0].strip() == "Points Possible"
+    assert rows[1][4] == "1", "one lecture is worth one point"
+    assert _session_score(teacher_client, code, "sixofeight") == "1"
+    assert _session_score(teacher_client, code, "fiveofeight") == "0"
+
+
+def test_the_column_is_named_for_the_lecture_and_its_date(teacher_client, make_client):
+    """Two runs of the same quiz would otherwise land in one Canvas column."""
+    student = make_client()
+    login(student, "anna")
+    code = _lecture_session(teacher_client, 1, {student: 2})
+
+    header = _rows(
+        teacher_client.get(
+            f"/api/sessions/{code}/canvas-participation.csv?course_id=63598"
+        ).text
+    )[0][4]
+    assert header.startswith("Lecture ")
+    assert header.split()[-1].count("-") == 2, "ends with an ISO date"
+
+    named = _rows(
+        teacher_client.get(
+            f"/api/sessions/{code}/canvas-participation.csv?assignment=Week%201"
+        ).text
+    )[0][4]
+    assert named == "Week 1"
+
+
+def test_the_session_bar_can_be_moved_too(teacher_client, make_client):
+    student = make_client()
+    login(student, "fiveofeight")
+    code = _lecture_session(teacher_client, 4, {student: 5})
+
+    assert _session_score(teacher_client, code, "fiveofeight", "&threshold=0.6") == "1"
+    assert _session_score(teacher_client, code, "fiveofeight", "&threshold=1.0") == "0"
+
+
+def test_the_two_canvas_files_agree_about_one_lecture(teacher_client, make_client):
+    """Both score through the same `session_answering`, so a student cannot
+    pass in one and fail in the other for the same session."""
+    good = make_client()
+    login(good, "sixofeight")
+    poor = make_client()
+    login(poor, "fiveofeight")
+    code = _lecture_session(teacher_client, 4, {good: 6, poor: 5})
+
+    for username, expected in (("sixofeight", "1"), ("fiveofeight", "0")):
+        assert _session_score(teacher_client, code, username) == expected
+        assert _score(teacher_client, username) == expected
+
+
+def test_a_lecture_that_asked_nothing_marks_nobody(teacher_client, make_client):
+    student = make_client()
+    login(student, "anna")
+    quiz_id = _quiz(teacher_client, "Cancelled")
+    _question(teacher_client, quiz_id, "never asked")
+    code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
+    student.get(f"/api/sessions/{code}/state")
+
+    assert _session_score(teacher_client, code, "anna") == "0"
+
+
+def test_the_session_canvas_file_is_teacher_only(teacher_client, student_client, make_client):
+    student = make_client()
+    login(student, "anna")
+    code = _lecture_session(teacher_client, 1, {student: 2})
+    url = f"/api/sessions/{code}/canvas-participation.csv"
+
+    assert student_client.get(url).status_code == 403
+    assert make_client().get(url).status_code == 401
+
+
+def test_another_teacher_cannot_download_your_session(teacher_client, make_client, monkeypatch):
+    from app.config import get_settings
+
+    student = make_client()
+    login(student, "anna")
+    code = _lecture_session(teacher_client, 1, {student: 2})
+    monkeypatch.setattr(get_settings(), "teacher_usernames", "teach,otherteacher")
+    intruder = make_client()
+    login(intruder, "otherteacher")
+
+    resp = intruder.get(f"/api/sessions/{code}/canvas-participation.csv")
+    assert resp.status_code == 403
