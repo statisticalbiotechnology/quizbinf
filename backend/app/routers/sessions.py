@@ -30,6 +30,7 @@ from ..schemas import (
     SessionOut,
     SessionState,
 )
+from .reports import CANVAS_STUDENT_COLUMNS, canvas_student_cells
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -302,18 +303,12 @@ def session_canvas_participation_csv(
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["Student", "ID", "SIS User ID", "SIS Login ID", column])
-    writer.writerow(["    Points Possible", "", "", "", 1])
+    writer.writerow(CANVAS_STUDENT_COLUMNS + [column])
+    writer.writerow(
+        ["    Points Possible"] + [""] * (len(CANVAS_STUDENT_COLUMNS) - 1) + [1]
+    )
     for row in report["students"]:
-        writer.writerow(
-            [
-                row["name"],
-                row["canvas_user_id"],
-                row["sis_user_id"],
-                row["username"],
-                row["attended"],
-            ]
-        )
+        writer.writerow(canvas_student_cells(row) + [row["attended"]])
 
     return Response(
         content=buf.getvalue(),

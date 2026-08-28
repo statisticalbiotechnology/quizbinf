@@ -180,13 +180,14 @@ def test_canvas_csv_keys_students_on_their_sis_id(teacher_client, make_client, m
     rows = _rows(body)
 
     assert rows[0] == [
-        "Student", "ID", "SIS User ID", "SIS Login ID", "Quiz participation",
+        "Student", "ID", "SIS User ID", "SIS Login ID", "Section",
+        "Quiz participation",
     ]
     # Canvas reads the second row as the denominator, not as a student.
     assert rows[1][0].strip() == "Points Possible"
-    assert rows[1][4] == "1"
+    assert rows[1][5] == "1"
     # Both identifiers Canvas will match on: its own user id, then the SIS one.
-    assert ["Shiraz Abbas", "5", "u1abcdef", "shiraza", "1"] in rows
+    assert ["Shiraz Abbas", "5", "u1abcdef", "shiraza", "", "1"] in rows
 
 
 def test_a_student_missing_from_the_roster_is_still_reported(teacher_client, make_client):
@@ -216,9 +217,9 @@ def test_the_mark_is_sessions_attended(teacher_client, make_client):
     rows = _rows(
         teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
     )
-    assert rows[1][4] == "2", "two sessions were run"
-    assert next(r for r in rows if r[3] == "present")[4] == "2"
-    assert next(r for r in rows if r[3] == "away")[4] == "1"
+    assert rows[1][5] == "2", "two sessions were run"
+    assert next(r for r in rows if r[3] == "present")[5] == "2"
+    assert next(r for r in rows if r[3] == "away")[5] == "1"
 
 
 def _run_lecture(teacher_client, questions: int, answering: dict) -> str:
@@ -256,7 +257,7 @@ def _score(teacher_client, username: str, query: str = "") -> str:
             f"/api/reports/canvas-participation.csv?course_id=63598{query}"
         ).text
     )
-    return next(r for r in rows if r[3] == username)[4]
+    return next(r for r in rows if r[3] == username)[5]
 
 
 def test_answering_six_of_eight_bouts_earns_the_lecture(teacher_client, make_client):
@@ -327,7 +328,7 @@ def test_a_lecture_that_asked_nothing_is_not_in_the_denominator(
     rows = _rows(
         teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
     )
-    assert rows[1][4] == "1", "only the lecture that asked something counts"
+    assert rows[1][5] == "1", "only the lecture that asked something counts"
     assert _score(teacher_client, "anna") == "1"
 
 
@@ -360,7 +361,7 @@ def test_the_assignment_column_can_be_named(teacher_client):
     body = teacher_client.get(
         "/api/reports/canvas-participation.csv?assignment=Peer%20instruction"
     ).text
-    assert _rows(body)[0][4] == "Peer instruction"
+    assert _rows(body)[0][5] == "Peer instruction"
 
 
 def test_the_canvas_csv_is_teacher_only(student_client, make_client):
@@ -383,7 +384,7 @@ def _session_score(teacher_client, code: str, username: str, query: str = "") ->
             f"/api/sessions/{code}/canvas-participation.csv?course_id=63598{query}"
         ).text
     )
-    return next(r for r in rows if r[3] == username)[4]
+    return next(r for r in rows if r[3] == username)[5]
 
 
 def test_one_lecture_can_be_marked_on_its_own(teacher_client, make_client):
@@ -399,9 +400,11 @@ def test_one_lecture_can_be_marked_on_its_own(teacher_client, make_client):
             f"/api/sessions/{code}/canvas-participation.csv?course_id=63598"
         ).text
     )
-    assert rows[0][:4] == ["Student", "ID", "SIS User ID", "SIS Login ID"]
+    assert rows[0][:5] == [
+        "Student", "ID", "SIS User ID", "SIS Login ID", "Section",
+    ]
     assert rows[1][0].strip() == "Points Possible"
-    assert rows[1][4] == "1", "one lecture is worth one point"
+    assert rows[1][5] == "1", "one lecture is worth one point"
     assert _session_score(teacher_client, code, "sixofeight") == "1"
     assert _session_score(teacher_client, code, "fiveofeight") == "0"
 
@@ -416,7 +419,7 @@ def test_the_column_is_named_for_the_lecture_and_its_date(teacher_client, make_c
         teacher_client.get(
             f"/api/sessions/{code}/canvas-participation.csv?course_id=63598"
         ).text
-    )[0][4]
+    )[0][5]
     assert header.startswith("Lecture ")
     assert header.split()[-1].count("-") == 2, "ends with an ISO date"
 
@@ -424,7 +427,7 @@ def test_the_column_is_named_for_the_lecture_and_its_date(teacher_client, make_c
         teacher_client.get(
             f"/api/sessions/{code}/canvas-participation.csv?assignment=Week%201"
         ).text
-    )[0][4]
+    )[0][5]
     assert named == "Week 1"
 
 
@@ -484,3 +487,86 @@ def test_another_teacher_cannot_download_your_session(teacher_client, make_clien
 
     resp = intruder.get(f"/api/sessions/{code}/canvas-participation.csv")
     assert resp.status_code == 403
+
+
+# --- the header Canvas will actually accept ---------------------------------
+#
+# Canvas refuses the whole file with "The CSV header row is invalid" if the
+# identifying block is not shaped the way its own export writes it. The rules
+# below are a transcription of `GradebookImporter#header?` and
+# `#update_column_count` from canvas-lms (lib/gradebook_importer.rb): count the
+# student-information columns, then require the **last** of them to be
+# "Section". Getting this wrong is invisible here and fatal there, which is why
+# it is checked against the rule rather than against a hard-coded list.
+
+
+def _canvas_accepts_header(row: list[str]) -> bool:
+    import re
+
+    if not (len(row) > 3 and "Student" in row[0] and "ID" in row[1]):
+        return False  # row_has_student_headers?
+
+    names = 3  # no LastName/FirstName split
+    columns = names
+    if re.search(r"SIS\s+Login\s+ID", row[names - 1]):
+        columns += 1
+    elif re.search(r"SIS\s+User\s+ID", row[names - 1]) and re.search(
+        r"SIS\s+Login\s+ID", row[names]
+    ):
+        extra = 1 if re.search(r"Integration\s+ID", row[names + 1]) else 0
+        columns += 2 + extra
+        if re.search(r"Root\s+Account", row[names + 1 + extra]):
+            columns += 1
+
+    return "Section" in row[columns - 1]
+
+
+def test_the_term_file_has_a_header_canvas_will_accept(teacher_client, make_client):
+    student = make_client()
+    login(student, "anna")
+    _run_lecture(teacher_client, 1, {student: 2})
+
+    header = _rows(
+        teacher_client.get("/api/reports/canvas-participation.csv").text
+    )[0]
+    assert _canvas_accepts_header(header), header
+
+
+def test_the_per_session_file_has_a_header_canvas_will_accept(teacher_client, make_client):
+    student = make_client()
+    login(student, "anna")
+    code = _run_lecture(teacher_client, 1, {student: 2})
+
+    header = _rows(
+        teacher_client.get(f"/api/sessions/{code}/canvas-participation.csv").text
+    )[0]
+    assert _canvas_accepts_header(header), header
+
+
+def test_dropping_the_section_column_is_what_canvas_refuses(teacher_client, make_client):
+    """The mistake this file shipped with once. Kept so the check above cannot
+    be satisfied by a transcription that accepts anything."""
+    student = make_client()
+    login(student, "anna")
+    _run_lecture(teacher_client, 1, {student: 2})
+
+    header = _rows(
+        teacher_client.get("/api/reports/canvas-participation.csv").text
+    )[0]
+    assert not _canvas_accepts_header([c for c in header if c != "Section"])
+
+
+def test_the_section_cell_is_present_but_empty(teacher_client, make_client):
+    """Canvas needs the column to validate the header and never reads it back;
+    the app does not know a student's section, so it must not invent one."""
+    student = make_client()
+    login(student, "anna")
+    _run_lecture(teacher_client, 1, {student: 2})
+
+    rows = _rows(teacher_client.get("/api/reports/canvas-participation.csv").text)
+    header, points_possible = rows[0], rows[1]
+    section = header.index("Section")
+    assert points_possible[section] == ""
+    for row in rows[2:]:
+        assert row[section] == ""
+        assert len(row) == len(header), "every row must line up with the header"

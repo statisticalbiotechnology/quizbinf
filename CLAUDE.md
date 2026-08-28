@@ -489,11 +489,18 @@ URL so the QR code resolves. See the README.
   "fix" either to agree with the other. `tests/test_export.py` pins the
   divergence with a student who scores full marks in one and nothing in the
   other. The file carries the identifying columns Canvas's own gradebook export
-  uses, one assignment column, and a *Points Possible* row; a column name
-  matching no existing assignment makes Canvas offer to create one, which is
-  how the teacher gets a participation Assignment without setting anything up
-  first. Both `canvas_user_id` and `kthid` go out, since Canvas matches on its
-  own id first and falls back to the SIS ones, and a manually created course
+  uses — `Student, ID, SIS User ID, SIS Login ID, Section` — one assignment
+  column, and a *Points Possible* row. **`Section` is not optional**: Canvas
+  counts the identifying columns and refuses the whole file with "The CSV
+  header row is invalid" unless the last of them is `Section`
+  (`GradebookImporter#header?`), which is how the first version of this file
+  came back rejected from a real Canvas. It goes out empty, since the app does
+  not know a student's section. `tests/test_export.py` transcribes that rule
+  and checks both files against it rather than against a fixed list of column
+  names. A column name matching no existing assignment makes Canvas offer to
+  create one, which is how the teacher gets a participation Assignment without
+  setting anything up first. Both `canvas_user_id` and `kthid` go out, since
+  Canvas matches on its own id first and falls back to the SIS ones, and a manually created course
   may have no SIS ids at all — the roster is the only bridge from the KTH
   username the app signs students in under. A student with no roster row is
   still listed, with blank ids: Canvas skips that row, and the blank is what

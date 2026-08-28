@@ -19,6 +19,31 @@ from ..models import User
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
+# The identifying block Canvas's own gradebook export writes, in its order.
+#
+# Every column here is load-bearing. Canvas validates the header by counting
+# these columns and then requiring the **last** of them to be "Section"
+# (`GradebookImporter#header?`); without it the import is refused outright with
+# "The CSV header row is invalid", which is what happened when this file first
+# went to a real Canvas. `Section` itself is never read back — the app does not
+# know a student's section — so it goes out empty.
+#
+# `ID` and the two SIS columns are all sent because Canvas matches on its own
+# user id first and falls back to the SIS ones, and a manually created course
+# may have no SIS ids at all.
+CANVAS_STUDENT_COLUMNS = ["Student", "ID", "SIS User ID", "SIS Login ID", "Section"]
+
+
+def canvas_student_cells(row: dict) -> list:
+    """The identifying cells for one student, matching CANVAS_STUDENT_COLUMNS."""
+    return [
+        row["name"],
+        row["canvas_user_id"],
+        row["sis_user_id"],
+        row["username"],
+        "",  # Section: required in the header, not something the app knows.
+    ]
+
 
 @router.get("/participation")
 def semester_participation(
@@ -63,23 +88,11 @@ def canvas_participation_csv(
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    # The identifying columns Canvas's own gradebook export writes, in its
-    # order. Canvas tries `ID` (its own user id) first and falls back to the
-    # SIS columns, so all three go out: an import then works whether or not
-    # the course has SIS ids.
-    writer.writerow(["Student", "ID", "SIS User ID", "SIS Login ID", assignment])
+    writer.writerow(CANVAS_STUDENT_COLUMNS + [assignment])
     # Canvas reads this row for the denominator, not as a student.
-    writer.writerow(["    Points Possible", "", "", "", total])
+    writer.writerow(["    Points Possible"] + [""] * (len(CANVAS_STUDENT_COLUMNS) - 1) + [total])
     for row in report["students"]:
-        writer.writerow(
-            [
-                row["name"],
-                row["canvas_user_id"],
-                row["sis_user_id"],
-                row["username"],
-                row["attended"],
-            ]
-        )
+        writer.writerow(canvas_student_cells(row) + [row["attended"]])
 
     return Response(
         content=buf.getvalue(),
