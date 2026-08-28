@@ -458,17 +458,26 @@ URL so the QR code resolves. See the README.
   (`no (1/2)`) so the all-or-nothing rule cannot silently hide a student who
   answered most of them. Personal data, so teacher-only and labelled
   do-not-project like the Participants view.
-- **The same attendance also comes out in Canvas's import format**
-  (`GET /api/reports/canvas-participation.csv`): the identifying columns
-  Canvas's gradebook export uses, one assignment column, and a *Points
-  Possible* row. A column name matching no existing assignment makes Canvas
-  offer to create one, which is how the teacher gets a participation Assignment
-  without setting anything up first. It is keyed on `kthid` from the synced
-  roster, because Canvas matches on an identifier it already holds and the KTH
-  username is not one; the roster is the only bridge between the two. A student
-  with no roster row is still listed, with a blank id — Canvas skips that row,
-  and the blank is what tells the teacher who it happened to instead of leaving
-  them to wonder why someone has no mark.
+- **The Canvas gradebook file asks a weaker question, on purpose.**
+  `GET /api/reports/canvas-participation.csv` scores **one point per session
+  the student turned up to** — logging in is the whole bar, however many
+  questions they answered — while the plain report above asks whether they
+  answered both bouts of everything. Two reports, two questions: the gradebook
+  one is participation credit for being in the room, so do not "fix" it to
+  agree with the other. `tests/test_export.py` pins the difference with a
+  student who answers one bout of two and scores full marks here and none
+  there. The file carries the identifying columns Canvas's own gradebook
+  export uses, one assignment column, and a *Points Possible* row; a column
+  name matching no existing assignment makes Canvas offer to create one, which
+  is how the teacher gets a participation Assignment without setting anything
+  up first. Both `canvas_user_id` and `kthid` go out, since Canvas matches on
+  its own id first and falls back to the SIS ones, and a manually created
+  course may have no SIS ids at all — the roster is the only bridge from the
+  KTH username the app signs students in under. A student with no roster row
+  is still listed, with blank ids: Canvas skips that row, and the blank is what
+  tells the teacher who it happened to instead of leaving them to wonder why
+  someone has no mark. The teacher is excluded, having run the lecture rather
+  than attended it.
 
 ## Local development
 
@@ -540,7 +549,7 @@ alembic upgrade head
 | `GET /api/sessions/{code}/participation` | teacher | **per-student** correctness (personal data) |
 | `GET /api/sessions/{code}/participation.csv` | teacher | the same as CSV |
 | `GET /api/reports/participation[.csv]?from=&to=` | teacher | **end of term:** attendance across every session, yes/no per session, no correctness |
-| `GET /api/reports/canvas-participation.csv?assignment=` | teacher | the same, in Canvas's gradebook-import format |
+| `GET /api/reports/canvas-participation.csv?assignment=` | teacher | attendance (1 point per session attended) in Canvas's gradebook-import format |
 | `GET /api/roster/status` | teacher | is Canvas configured, and what has been synced |
 | `GET /api/roster/courses` | teacher | Canvas courses the token's owner teaches |
 | `POST /api/roster/sync?course_id=` | teacher | mirror a course's students into the local roster |

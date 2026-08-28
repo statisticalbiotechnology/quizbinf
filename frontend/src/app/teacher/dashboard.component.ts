@@ -39,10 +39,12 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
 
         <p class="note">
           <strong>For the Canvas gradebook:</strong> the second file below is
-          Canvas's own import format — sessions attended out of sessions run,
-          keyed on each student's KTH id from the synced roster. In Canvas go
-          to Grades → Import, upload it, and when it asks about the unknown
-          column let it create the assignment.
+          Canvas's own import format. One point per session the student
+          turned up to, out of the sessions run — logging in is the whole
+          bar, however many questions they answered. Keyed on each student's
+          ids from the synced roster. In Canvas go to Grades → Import, upload
+          it, and when it asks about the unknown column let it create the
+          assignment.
         </p>
         <div class="range">
           <label>

@@ -217,6 +217,31 @@ def participation_report(db: Session, session: QuizSession) -> list[dict]:
     return rows
 
 
+def sessions_in_range(
+    db: Session,
+    teacher: User,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[QuizSession]:
+    """The teacher's own sessions, oldest first, within an optional date range.
+
+    Shared by both end-of-term reports so they cannot disagree about which
+    lectures are in scope — including the end date being inclusive, which is
+    what a person means by "to the 12th".
+    """
+    query = (
+        select(QuizSession)
+        .join(Quiz, QuizSession.quiz_id == Quiz.id)
+        .where(Quiz.owner_id == teacher.id)
+        .order_by(QuizSession.created_at, QuizSession.id)
+    )
+    if start is not None:
+        query = query.where(QuizSession.created_at >= datetime.combine(start, time.min))
+    if end is not None:
+        query = query.where(QuizSession.created_at <= datetime.combine(end, time.max))
+    return list(db.scalars(query))
+
+
 def semester_participation(
     db: Session,
     teacher: User,
@@ -239,18 +264,7 @@ def semester_participation(
     visible: a strict all-or-nothing verdict would otherwise hide a student
     who answered three of four questions.
     """
-    query = (
-        select(QuizSession)
-        .join(Quiz, QuizSession.quiz_id == Quiz.id)
-        .where(Quiz.owner_id == teacher.id)
-        .order_by(QuizSession.created_at, QuizSession.id)
-    )
-    if start is not None:
-        query = query.where(QuizSession.created_at >= datetime.combine(start, time.min))
-    if end is not None:
-        # Inclusive of the end date, which is what a person means by a range.
-        query = query.where(QuizSession.created_at <= datetime.combine(end, time.max))
-    sessions = list(db.scalars(query))
+    sessions = sessions_in_range(db, teacher, start, end)
 
     users: dict[int, User] = {}
     # user_id -> session_id -> (pairs_completed, pairs_asked)
@@ -325,15 +339,26 @@ def canvas_participation(
     start: date | None = None,
     end: date | None = None,
 ) -> dict:
-    """Attendance joined to the Canvas roster, for the gradebook importer.
+    """Attendance as *turning up*, joined to the Canvas roster.
+
+    One point per session the student was present for, regardless of how many
+    questions they answered. That is deliberately a weaker bar than the plain
+    participation report, which asks whether they answered both bouts of every
+    question: this number goes in the gradebook as participation credit, and
+    what it is meant to record is that the student came to the lecture and took
+    part, not how completely they kept up.
+
+    Present means having opened the session. Answering counts too even if the
+    join was never recorded — the row is written when a client fetches the
+    state, and an answer is stronger evidence of being in the room than that.
 
     Canvas matches an imported row on an identifier it already holds, so the
-    attendance figures are useless on their own: they are keyed by KTH
-    username, which Canvas does not store as such. The roster is what bridges
-    the two, and it carries both identifiers Canvas will match on — the Canvas
-    user id it tries first, and `kthid` (Canvas `sis_user_id`) behind it.
-    Emitting both means an import does not depend on the course having SIS
-    ids, which a manually created course may not.
+    figures are useless on their own: they are keyed by KTH username, which
+    Canvas does not store as such. The roster is what bridges the two, and it
+    carries both identifiers Canvas will match on — the Canvas user id it tries
+    first, and `kthid` (Canvas `sis_user_id`) behind it. Emitting both means an
+    import does not depend on the course having SIS ids, which a manually
+    created course may not.
 
     A student with no roster row is still reported, with no identifier and
     flagged as unmatched. Canvas will skip that row on import, but dropping it
@@ -341,7 +366,30 @@ def canvas_participation(
     missing a mark" is a worse problem to debug in the gradebook than in the
     file.
     """
-    report = semester_participation(db, teacher, start, end)
+    sessions = sessions_in_range(db, teacher, start, end)
+
+    users: dict[int, User] = {}
+    present: dict[int, set[int]] = {}  # user_id -> session ids
+
+    for session in sessions:
+        def note(user: User) -> None:
+            # The teacher runs the lecture rather than attending it, and may
+            # well have answered while testing the student view.
+            if user.id == session.quiz.owner_id:
+                return
+            users[user.id] = user
+            present.setdefault(user.id, set()).add(session.id)
+
+        for participant in db.scalars(
+            select(SessionParticipant).where(
+                SessionParticipant.session_id == session.id
+            )
+        ):
+            note(participant.user)
+        for round_ in session.rounds:
+            for answer in round_.answers:
+                note(answer.user)
+
     roster = {
         entry.username: entry
         for entry in db.scalars(
@@ -350,20 +398,26 @@ def canvas_participation(
     }
 
     rows = []
-    for student in report["students"]:
-        entry = roster.get(student["username"])
+    for user_id, user in sorted(users.items(), key=lambda kv: kv[1].username):
+        entry = roster.get(user.username)
         rows.append(
             {
-                "name": entry.display_name if entry else student["display_name"],
-                "username": student["username"],
+                "name": entry.display_name if entry else user.display_name,
+                "username": user.username,
                 "canvas_user_id": entry.canvas_user_id if entry else "",
                 "sis_user_id": (entry.kthid if entry else None) or "",
-                "attended": student["attended"],
+                "attended": len(present.get(user_id, ())),
                 "matched": entry is not None,
             }
         )
 
-    return {"sessions": report["sessions"], "students": rows}
+    return {
+        "sessions": [
+            {"code": s.code, "title": s.quiz.title, "date": s.created_at.date().isoformat()}
+            for s in sessions
+        ],
+        "students": rows,
+    }
 
 
 def sync_roster(db: Session, teacher: User, course_id: int, students: list[dict]) -> dict:

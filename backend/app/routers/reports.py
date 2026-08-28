@@ -49,8 +49,10 @@ def canvas_participation_csv(
     Canvas offer to create one on import, which is how a teacher turns this
     into a participation Assignment without setting anything up first.
 
-    The mark is sessions attended out of sessions run, so it is the same
-    number the plain report shows rather than a re-interpretation of it.
+    The mark is one point per session the student turned up to, out of the
+    sessions run. Turning up is the whole bar: this is the participation
+    credit, and how many questions someone answered is the other report's
+    question, not this one's.
     """
     course = course_id or settings.canvas_course_id
     report = service.canvas_participation(db, teacher, course, start, end)

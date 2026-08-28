@@ -221,6 +221,90 @@ def test_the_mark_is_sessions_attended(teacher_client, make_client):
     assert next(r for r in rows if r[3] == "away")[4] == "1"
 
 
+def test_logging_in_is_enough_to_score_the_point(teacher_client, make_client):
+    """The Canvas mark is attendance, not completeness: a student who turned
+    up and never answered a thing still gets the point for the session."""
+    silent = make_client()
+    login(silent, "quiet")
+    quiz_id = _quiz(teacher_client, "Lecture")
+    question = _question(teacher_client, quiz_id, "Which?")
+    code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
+    silent.get(f"/api/sessions/{code}/state")  # logs in, answers nothing
+
+    for phase in ("pre", "post"):
+        round_ = teacher_client.post(
+            f"/api/sessions/{code}/rounds",
+            json={"question_id": question["id"], "phase": phase},
+        ).json()
+        teacher_client.post(f"/api/sessions/{code}/rounds/{round_['id']}/close")
+
+    rows = _rows(
+        teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
+    )
+    assert next(r for r in rows if r[3] == "quiet")[4] == "1"
+
+
+def test_answering_only_half_the_questions_still_scores_the_point(
+    teacher_client, make_client
+):
+    """The plain report marks this student down; the gradebook does not. The
+    two reports answer different questions on purpose."""
+    partial = make_client()
+    login(partial, "half")
+    quiz_id = _quiz(teacher_client, "Lecture")
+    question = _question(teacher_client, quiz_id, "Which?")
+    choice = question["choices"][0]["id"]
+    code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
+
+    for phase in ("pre", "post"):
+        round_ = teacher_client.post(
+            f"/api/sessions/{code}/rounds",
+            json={"question_id": question["id"], "phase": phase},
+        ).json()
+        if phase == "pre":  # answers the first bout only
+            partial.post(f"/api/sessions/{code}/answers", json={"choice_id": choice})
+        teacher_client.post(f"/api/sessions/{code}/rounds/{round_['id']}/close")
+
+    canvas = _rows(
+        teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
+    )
+    assert next(r for r in canvas if r[3] == "half")[4] == "1"
+
+    plain = teacher_client.get("/api/reports/participation").json()
+    row = next(r for r in plain["students"] if r["username"] == "half")
+    assert row["attended"] == 0, "the plain report still asks for both bouts"
+
+
+def test_a_student_who_missed_a_lecture_scores_nothing_for_it(teacher_client, make_client):
+    regular = make_client()
+    login(regular, "regular")
+    latecomer = make_client()
+    login(latecomer, "latecomer")
+
+    _run_one_question_session(teacher_client, [regular])
+    _run_one_question_session(teacher_client, [regular, latecomer])
+
+    rows = _rows(
+        teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
+    )
+    assert rows[1][4] == "2", "two lectures were run"
+    assert next(r for r in rows if r[3] == "regular")[4] == "2"
+    assert next(r for r in rows if r[3] == "latecomer")[4] == "1"
+
+
+def test_the_teacher_is_not_marked_for_their_own_lecture(teacher_client, make_client):
+    """They may have answered while testing the student view, and they are
+    running the lecture rather than attending it."""
+    student = make_client()
+    login(student, "anna")
+    _run_one_question_session(teacher_client, [student, teacher_client])
+
+    rows = _rows(
+        teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
+    )
+    assert [r[3] for r in rows[2:]] == ["anna"]
+
+
 def test_the_assignment_column_can_be_named(teacher_client):
     """The column name is what Canvas offers to create an assignment from."""
     body = teacher_client.get(
