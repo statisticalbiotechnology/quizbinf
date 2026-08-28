@@ -58,12 +58,22 @@ def canvas_participation_csv(
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["Student", "SIS User ID", "SIS Login ID", assignment])
+    # The identifying columns Canvas's own gradebook export writes, in its
+    # order. Canvas tries `ID` (its own user id) first and falls back to the
+    # SIS columns, so all three go out: an import then works whether or not
+    # the course has SIS ids.
+    writer.writerow(["Student", "ID", "SIS User ID", "SIS Login ID", assignment])
     # Canvas reads this row for the denominator, not as a student.
-    writer.writerow(["    Points Possible", "", "", total])
+    writer.writerow(["    Points Possible", "", "", "", total])
     for row in report["students"]:
         writer.writerow(
-            [row["name"], row["sis_user_id"], row["username"], row["attended"]]
+            [
+                row["name"],
+                row["canvas_user_id"],
+                row["sis_user_id"],
+                row["username"],
+                row["attended"],
+            ]
         )
 
     return Response(

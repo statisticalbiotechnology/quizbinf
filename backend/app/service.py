@@ -330,8 +330,10 @@ def canvas_participation(
     Canvas matches an imported row on an identifier it already holds, so the
     attendance figures are useless on their own: they are keyed by KTH
     username, which Canvas does not store as such. The roster is what bridges
-    the two — it carries `kthid` (Canvas `sis_user_id`) against the same
-    username the app signs students in under.
+    the two, and it carries both identifiers Canvas will match on — the Canvas
+    user id it tries first, and `kthid` (Canvas `sis_user_id`) behind it.
+    Emitting both means an import does not depend on the course having SIS
+    ids, which a manually created course may not.
 
     A student with no roster row is still reported, with no identifier and
     flagged as unmatched. Canvas will skip that row on import, but dropping it
@@ -354,9 +356,10 @@ def canvas_participation(
             {
                 "name": entry.display_name if entry else student["display_name"],
                 "username": student["username"],
+                "canvas_user_id": entry.canvas_user_id if entry else "",
                 "sis_user_id": (entry.kthid if entry else None) or "",
                 "attended": student["attended"],
-                "matched": entry is not None and bool(entry.kthid),
+                "matched": entry is not None,
             }
         )
 

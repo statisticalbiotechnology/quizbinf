@@ -179,11 +179,14 @@ def test_canvas_csv_keys_students_on_their_sis_id(teacher_client, make_client, m
     body = teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
     rows = _rows(body)
 
-    assert rows[0] == ["Student", "SIS User ID", "SIS Login ID", "Quiz participation"]
+    assert rows[0] == [
+        "Student", "ID", "SIS User ID", "SIS Login ID", "Quiz participation",
+    ]
     # Canvas reads the second row as the denominator, not as a student.
     assert rows[1][0].strip() == "Points Possible"
-    assert rows[1][3] == "1"
-    assert ["Shiraz Abbas", "u1abcdef", "shiraza", "1"] in rows
+    assert rows[1][4] == "1"
+    # Both identifiers Canvas will match on: its own user id, then the SIS one.
+    assert ["Shiraz Abbas", "5", "u1abcdef", "shiraza", "1"] in rows
 
 
 def test_a_student_missing_from_the_roster_is_still_reported(teacher_client, make_client):
@@ -196,8 +199,9 @@ def test_a_student_missing_from_the_roster_is_still_reported(teacher_client, mak
     rows = _rows(
         teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
     )
-    row = next(r for r in rows if r[2] == "nobody")
-    assert row[1] == "", "no SIS id is known for a student who is not on the roster"
+    row = next(r for r in rows if r[3] == "nobody")
+    assert row[1] == "", "no Canvas id is known for a student not on the roster"
+    assert row[2] == "", "and no SIS id either"
 
 
 def test_the_mark_is_sessions_attended(teacher_client, make_client):
@@ -212,9 +216,9 @@ def test_the_mark_is_sessions_attended(teacher_client, make_client):
     rows = _rows(
         teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
     )
-    assert rows[1][3] == "2", "two sessions were run"
-    assert next(r for r in rows if r[2] == "present")[3] == "2"
-    assert next(r for r in rows if r[2] == "away")[3] == "1"
+    assert rows[1][4] == "2", "two sessions were run"
+    assert next(r for r in rows if r[3] == "present")[4] == "2"
+    assert next(r for r in rows if r[3] == "away")[4] == "1"
 
 
 def test_the_assignment_column_can_be_named(teacher_client):
@@ -222,7 +226,7 @@ def test_the_assignment_column_can_be_named(teacher_client):
     body = teacher_client.get(
         "/api/reports/canvas-participation.csv?assignment=Peer%20instruction"
     ).text
-    assert _rows(body)[0][3] == "Peer instruction"
+    assert _rows(body)[0][4] == "Peer instruction"
 
 
 def test_the_canvas_csv_is_teacher_only(student_client, make_client):
