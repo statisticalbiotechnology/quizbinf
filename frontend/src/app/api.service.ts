@@ -137,6 +137,27 @@ export class ApiService {
     );
   }
 
+  /**
+   * Set the running order of a quiz's questions.
+   *
+   * Sends the whole order rather than "move this one up", so a stale list is
+   * refused (409) instead of renumbering from a view that no longer matches.
+   * Safe after a question has been asked — answers hang off question ids.
+   */
+  reorderQuestions(quizId: number, questionIds: number[]): Observable<Question[]> {
+    return this.http.put<Question[]>(
+      `${API_BASE}/api/quizzes/${quizId}/questions/order`,
+      { question_ids: questionIds },
+      this.opts,
+    );
+  }
+
+  /** The questions as study material to post in Canvas. */
+  quizExportUrl(quizId: number, format: 'md' | 'html', answers = true): string {
+    const query = answers ? '' : '?answers=false';
+    return `${API_BASE}/api/quizzes/${quizId}/export.${format}${query}`;
+  }
+
   /** Refused (409) once the question has been asked, to protect its answers. */
   deleteQuestion(quizId: number, questionId: number): Observable<void> {
     return this.http.delete<void>(
@@ -243,6 +264,21 @@ export class ApiService {
     if (to) range.set('to', to);
     const query = range.toString();
     return `${API_BASE}/api/reports/participation.csv${query ? '?' + query : ''}`;
+  }
+
+  /**
+   * The same attendance, shaped for Canvas's gradebook importer.
+   *
+   * One column per assignment is Canvas's format; a column name matching no
+   * existing assignment makes Canvas offer to create one.
+   */
+  canvasParticipationCsvUrl(from: string, to: string, assignment: string): string {
+    const query = new URLSearchParams();
+    if (from) query.set('from', from);
+    if (to) query.set('to', to);
+    if (assignment) query.set('assignment', assignment);
+    const q = query.toString();
+    return `${API_BASE}/api/reports/canvas-participation.csv${q ? '?' + q : ''}`;
   }
 
   /** Answer count for the open round — count only, safe to project. */

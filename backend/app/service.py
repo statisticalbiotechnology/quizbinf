@@ -318,6 +318,51 @@ def semester_participation(
     }
 
 
+def canvas_participation(
+    db: Session,
+    teacher: User,
+    course_id: int,
+    start: date | None = None,
+    end: date | None = None,
+) -> dict:
+    """Attendance joined to the Canvas roster, for the gradebook importer.
+
+    Canvas matches an imported row on an identifier it already holds, so the
+    attendance figures are useless on their own: they are keyed by KTH
+    username, which Canvas does not store as such. The roster is what bridges
+    the two — it carries `kthid` (Canvas `sis_user_id`) against the same
+    username the app signs students in under.
+
+    A student with no roster row is still reported, with no identifier and
+    flagged as unmatched. Canvas will skip that row on import, but dropping it
+    here would hide the mismatch from the teacher, and "why is this student
+    missing a mark" is a worse problem to debug in the gradebook than in the
+    file.
+    """
+    report = semester_participation(db, teacher, start, end)
+    roster = {
+        entry.username: entry
+        for entry in db.scalars(
+            select(RosterEntry).where(RosterEntry.course_id == course_id)
+        )
+    }
+
+    rows = []
+    for student in report["students"]:
+        entry = roster.get(student["username"])
+        rows.append(
+            {
+                "name": entry.display_name if entry else student["display_name"],
+                "username": student["username"],
+                "sis_user_id": (entry.kthid if entry else None) or "",
+                "attended": student["attended"],
+                "matched": entry is not None and bool(entry.kthid),
+            }
+        )
+
+    return {"sessions": report["sessions"], "students": rows}
+
+
 def sync_roster(db: Session, teacher: User, course_id: int, students: list[dict]) -> dict:
     """Replace the stored roster for a course with what Canvas just reported.
 
@@ -568,6 +613,32 @@ def update_question(
     db.commit()
     db.refresh(question)
     return question
+
+
+def reorder_questions(db: Session, quiz: Quiz, question_ids: list[int]) -> list[Question]:
+    """Put a quiz's questions in the given order.
+
+    Takes the complete order rather than a "move this one up", so the result
+    does not depend on what the client thought the order was: two teachers
+    editing the same quiz cannot interleave two moves into a shuffle. The list
+    must therefore be exactly this quiz's questions, each once — anything else
+    is a stale client, and renumbering from it would silently drop or duplicate
+    a question.
+
+    Safe after a question has been asked: rounds point at question ids, never
+    at positions, so reordering moves nothing but the running order.
+    """
+    current = {q.id: q for q in quiz.questions}
+    if len(question_ids) != len(set(question_ids)) or set(question_ids) != current.keys():
+        raise RuleViolation(
+            "The new order must list each of this quiz's questions exactly once"
+        )
+
+    for position, question_id in enumerate(question_ids):
+        current[question_id].position = position
+    db.commit()
+    db.refresh(quiz)
+    return list(quiz.questions)
 
 
 def delete_question(db: Session, question: Question) -> None:
