@@ -221,15 +221,84 @@ def test_the_mark_is_sessions_attended(teacher_client, make_client):
     assert next(r for r in rows if r[3] == "away")[4] == "1"
 
 
-def test_logging_in_is_enough_to_score_the_point(teacher_client, make_client):
-    """The Canvas mark is attendance, not completeness: a student who turned
-    up and never answered a thing still gets the point for the session."""
-    silent = make_client()
-    login(silent, "quiet")
+def _run_lecture(teacher_client, questions: int, answering: dict) -> str:
+    """Run `questions` questions over both bouts.
+
+    `answering` maps a client to how many of the bouts it answers, taken in
+    order — so 6 of 8 means it answers the first six windows and misses the
+    last two, which is what a student who leaves early looks like.
+    """
+    quiz_id = _quiz(teacher_client, "Lecture")
+    qs = [_question(teacher_client, quiz_id, f"Q{i}") for i in range(questions)]
+    code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
+
+    bout = 0
+    for question in qs:
+        for phase in ("pre", "post"):
+            round_ = teacher_client.post(
+                f"/api/sessions/{code}/rounds",
+                json={"question_id": question["id"], "phase": phase},
+            ).json()
+            for client, wanted in answering.items():
+                if bout < wanted:
+                    client.post(
+                        f"/api/sessions/{code}/answers",
+                        json={"choice_id": question["choices"][0]["id"]},
+                    )
+            teacher_client.post(f"/api/sessions/{code}/rounds/{round_['id']}/close")
+            bout += 1
+    return code
+
+
+def _score(teacher_client, username: str, query: str = "") -> str:
+    rows = _rows(
+        teacher_client.get(
+            f"/api/reports/canvas-participation.csv?course_id=63598{query}"
+        ).text
+    )
+    return next(r for r in rows if r[3] == username)[4]
+
+
+def test_answering_six_of_eight_bouts_earns_the_lecture(teacher_client, make_client):
+    """Four questions asked twice is eight chances; six of them is the bar.
+
+    Not all eight: somebody always misses a window by seconds or arrives
+    during the first question, and that is not absence.
+    """
+    student = make_client()
+    login(student, "sixofeight")
+    _run_lecture(teacher_client, questions=4, answering={student: 6})
+
+    assert _score(teacher_client, "sixofeight") == "1"
+
+
+def test_answering_five_of_eight_does_not(teacher_client, make_client):
+    student = make_client()
+    login(student, "fiveofeight")
+    _run_lecture(teacher_client, questions=4, answering={student: 5})
+
+    assert _score(teacher_client, "fiveofeight") == "0"
+
+
+def test_missing_a_single_window_still_earns_it(teacher_client, make_client):
+    """The case the threshold exists for."""
+    student = make_client()
+    login(student, "sevenofeight")
+    _run_lecture(teacher_client, questions=4, answering={student: 7})
+
+    assert _score(teacher_client, "sevenofeight") == "1"
+
+
+def test_logging_in_without_answering_earns_nothing(teacher_client, make_client):
+    """A login says only that someone has the session code — which can be read
+    off a photo of the screen from anywhere. Answering is what needs presence
+    while each window is open."""
+    lurker = make_client()
+    login(lurker, "lurker")
     quiz_id = _quiz(teacher_client, "Lecture")
     question = _question(teacher_client, quiz_id, "Which?")
     code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
-    silent.get(f"/api/sessions/{code}/state")  # logs in, answers nothing
+    lurker.get(f"/api/sessions/{code}/state")  # signs in, answers nothing
 
     for phase in ("pre", "post"):
         round_ = teacher_client.post(
@@ -238,71 +307,52 @@ def test_logging_in_is_enough_to_score_the_point(teacher_client, make_client):
         ).json()
         teacher_client.post(f"/api/sessions/{code}/rounds/{round_['id']}/close")
 
-    rows = _rows(
-        teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
-    )
-    assert next(r for r in rows if r[3] == "quiet")[4] == "1"
+    # Listed, so the teacher can see who it was — with a zero.
+    assert _score(teacher_client, "lurker") == "0"
 
 
-def test_answering_only_half_the_questions_still_scores_the_point(
+def test_a_lecture_that_asked_nothing_is_not_in_the_denominator(
     teacher_client, make_client
 ):
-    """The plain report marks this student down; the gradebook does not. The
-    two reports answer different questions on purpose."""
-    partial = make_client()
-    login(partial, "half")
-    quiz_id = _quiz(teacher_client, "Lecture")
-    question = _question(teacher_client, quiz_id, "Which?")
-    choice = question["choices"][0]["id"]
-    code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
-
-    for phase in ("pre", "post"):
-        round_ = teacher_client.post(
-            f"/api/sessions/{code}/rounds",
-            json={"question_id": question["id"], "phase": phase},
-        ).json()
-        if phase == "pre":  # answers the first bout only
-            partial.post(f"/api/sessions/{code}/answers", json={"choice_id": choice})
-        teacher_client.post(f"/api/sessions/{code}/rounds/{round_['id']}/close")
-
-    canvas = _rows(
-        teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
-    )
-    assert next(r for r in canvas if r[3] == "half")[4] == "1"
-
-    plain = teacher_client.get("/api/reports/participation").json()
-    row = next(r for r in plain["students"] if r["username"] == "half")
-    assert row["attended"] == 0, "the plain report still asks for both bouts"
-
-
-def test_a_student_who_missed_a_lecture_scores_nothing_for_it(teacher_client, make_client):
-    regular = make_client()
-    login(regular, "regular")
-    latecomer = make_client()
-    login(latecomer, "latecomer")
-
-    _run_one_question_session(teacher_client, [regular])
-    _run_one_question_session(teacher_client, [regular, latecomer])
-
-    rows = _rows(
-        teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
-    )
-    assert rows[1][4] == "2", "two lectures were run"
-    assert next(r for r in rows if r[3] == "regular")[4] == "2"
-    assert next(r for r in rows if r[3] == "latecomer")[4] == "1"
-
-
-def test_the_teacher_is_not_marked_for_their_own_lecture(teacher_client, make_client):
-    """They may have answered while testing the student view, and they are
-    running the lecture rather than attending it."""
+    """Nothing was asked, so it can neither be attended nor missed. Counting
+    it would mark the whole class down for a lecture that ran no questions."""
     student = make_client()
     login(student, "anna")
-    _run_one_question_session(teacher_client, [student, teacher_client])
+    _run_lecture(teacher_client, questions=1, answering={student: 2})
+
+    quiz_id = _quiz(teacher_client, "Cancelled")
+    _question(teacher_client, quiz_id, "never asked")
+    teacher_client.post(f"/api/sessions?quiz_id={quiz_id}")
 
     rows = _rows(
         teacher_client.get("/api/reports/canvas-participation.csv?course_id=63598").text
     )
-    assert [r[3] for r in rows[2:]] == ["anna"]
+    assert rows[1][4] == "1", "only the lecture that asked something counts"
+    assert _score(teacher_client, "anna") == "1"
+
+
+def test_the_bar_can_be_moved(teacher_client, make_client):
+    """A course that wants every bout, or a laxer one, without a redeploy."""
+    student = make_client()
+    login(student, "fiveofeight")
+    _run_lecture(teacher_client, questions=4, answering={student: 5})
+
+    assert _score(teacher_client, "fiveofeight", "&threshold=0.6") == "1"
+    assert _score(teacher_client, "fiveofeight", "&threshold=1.0") == "0"
+
+
+def test_the_plain_report_is_not_affected_by_the_canvas_bar(teacher_client, make_client):
+    """Two reports, two questions. The plain one asks whether the student
+    answered *both* bouts of every question; the gradebook one asks whether
+    they did most of the lecture. Neither should be made to agree."""
+    student = make_client()
+    login(student, "sixofeight")
+    _run_lecture(teacher_client, questions=4, answering={student: 6})
+
+    assert _score(teacher_client, "sixofeight") == "1"
+    plain = teacher_client.get("/api/reports/participation").json()
+    row = next(r for r in plain["students"] if r["username"] == "sixofeight")
+    assert row["attended"] == 0, "it missed the last question's bouts entirely"
 
 
 def test_the_assignment_column_can_be_named(teacher_client):

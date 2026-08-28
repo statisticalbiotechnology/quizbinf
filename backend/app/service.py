@@ -332,25 +332,38 @@ def semester_participation(
     }
 
 
+#: How much of a lecture's answering a student must do to be counted present.
+#: Not all of it: somebody always misses a window by seconds, loses signal, or
+#: arrives during the first question, and none of that is absence. Four
+#: questions asked twice is eight chances, of which six must be taken.
+DEFAULT_ANSWER_THRESHOLD = 0.75
+
+
 def canvas_participation(
     db: Session,
     teacher: User,
     course_id: int,
     start: date | None = None,
     end: date | None = None,
+    threshold: float = DEFAULT_ANSWER_THRESHOLD,
 ) -> dict:
-    """Attendance as *turning up*, joined to the Canvas roster.
+    """Attendance for the gradebook: one point per lecture the student worked.
 
-    One point per session the student was present for, regardless of how many
-    questions they answered. That is deliberately a weaker bar than the plain
-    participation report, which asks whether they answered both bouts of every
-    question: this number goes in the gradebook as participation credit, and
-    what it is meant to record is that the student came to the lecture and took
-    part, not how completely they kept up.
+    Worked, not attended. The bar is answering at least `threshold` of the
+    bouts the lecture actually ran — every round counts as one chance, so four
+    questions asked twice is eight chances and six of them must be taken.
 
-    Present means having opened the session. Answering counts too even if the
-    join was never recorded — the row is written when a client fetches the
-    state, and an answer is stronger evidence of being in the room than that.
+    The bar is answering rather than logging in because a login proves nothing
+    about being in the room: a student can sign in from anywhere. Answering
+    most of the bouts means being present while each submission window was
+    open, which is as close to attendance as this app can get. It is
+    deliberately not *every* bout — someone always misses a window by seconds
+    — which is what the threshold buys.
+
+    A session that ran no rounds is dropped rather than scored: there was
+    nothing to answer, so it can neither be attended nor missed, and leaving it
+    in the denominator would mark the whole class down for a lecture that never
+    asked anything.
 
     Canvas matches an imported row on an identifier it already holds, so the
     figures are useless on their own: they are keyed by KTH username, which
@@ -366,29 +379,42 @@ def canvas_participation(
     missing a mark" is a worse problem to debug in the gradebook than in the
     file.
     """
-    sessions = sessions_in_range(db, teacher, start, end)
-
     users: dict[int, User] = {}
-    present: dict[int, set[int]] = {}  # user_id -> session ids
+    # user_id -> session_id -> bouts answered
+    answered: dict[int, dict[int, int]] = {}
+    # session_id -> bouts run
+    chances: dict[int, int] = {}
+    scored: list[QuizSession] = []
 
-    for session in sessions:
+    for session in sessions_in_range(db, teacher, start, end):
+        # A round whose question was deleted under an older build cannot be
+        # counted as a chance nobody took.
+        rounds = [r for r in session.rounds if r.question is not None]
+        if not rounds:
+            continue
+        scored.append(session)
+        chances[session.id] = len(rounds)
+
         def note(user: User) -> None:
-            # The teacher runs the lecture rather than attending it, and may
-            # well have answered while testing the student view.
-            if user.id == session.quiz.owner_id:
-                return
-            users[user.id] = user
-            present.setdefault(user.id, set()).add(session.id)
+            # The teacher runs the lecture rather than sitting it, and may well
+            # have answered while testing the student view.
+            if user.id != session.quiz.owner_id:
+                users[user.id] = user
 
+        for round_ in rounds:
+            for answer in round_.answers:
+                note(answer.user)
+                if answer.user_id in users:
+                    counts = answered.setdefault(answer.user_id, {})
+                    counts[session.id] = counts.get(session.id, 0) + 1
+        # Listed with a zero rather than left out: a student who turned up and
+        # answered nothing is exactly who the teacher wants to see.
         for participant in db.scalars(
             select(SessionParticipant).where(
                 SessionParticipant.session_id == session.id
             )
         ):
             note(participant.user)
-        for round_ in session.rounds:
-            for answer in round_.answers:
-                note(answer.user)
 
     roster = {
         entry.username: entry
@@ -399,6 +425,11 @@ def canvas_participation(
 
     rows = []
     for user_id, user in sorted(users.items(), key=lambda kv: kv[1].username):
+        met = 0
+        for session in scored:
+            taken = answered.get(user_id, {}).get(session.id, 0)
+            if taken / chances[session.id] >= threshold:
+                met += 1
         entry = roster.get(user.username)
         rows.append(
             {
@@ -406,15 +437,16 @@ def canvas_participation(
                 "username": user.username,
                 "canvas_user_id": entry.canvas_user_id if entry else "",
                 "sis_user_id": (entry.kthid if entry else None) or "",
-                "attended": len(present.get(user_id, ())),
+                "attended": met,
                 "matched": entry is not None,
             }
         )
 
     return {
+        "threshold": threshold,
         "sessions": [
             {"code": s.code, "title": s.quiz.title, "date": s.created_at.date().isoformat()}
-            for s in sessions
+            for s in scored
         ],
         "students": rows,
     }

@@ -38,6 +38,7 @@ def canvas_participation_csv(
     settings: Settings = Depends(get_settings),
     course_id: int | None = Query(None),
     assignment: str = Query("Quiz participation"),
+    threshold: float = Query(service.DEFAULT_ANSWER_THRESHOLD, ge=0.0, le=1.0),
     start: date | None = Query(None, alias="from"),
     end: date | None = Query(None, alias="to"),
 ) -> Response:
@@ -49,13 +50,15 @@ def canvas_participation_csv(
     Canvas offer to create one on import, which is how a teacher turns this
     into a participation Assignment without setting anything up first.
 
-    The mark is one point per session the student turned up to, out of the
-    sessions run. Turning up is the whole bar: this is the participation
-    credit, and how many questions someone answered is the other report's
-    question, not this one's.
+    The mark is one point per lecture in which the student answered at least
+    `threshold` of the bouts that ran — the closest this app gets to a record
+    of who was in the room, since a login proves only that someone knows the
+    session code.
     """
     course = course_id or settings.canvas_course_id
-    report = service.canvas_participation(db, teacher, course, start, end)
+    report = service.canvas_participation(
+        db, teacher, course, start, end, threshold
+    )
     total = len(report["sessions"])
 
     buf = io.StringIO()

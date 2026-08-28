@@ -39,11 +39,13 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
 
         <p class="note">
           <strong>For the Canvas gradebook:</strong> the second file below is
-          Canvas's own import format. One point per session the student
-          turned up to, out of the sessions run — logging in is the whole
-          bar, however many questions they answered. Keyed on each student's
-          ids from the synced roster. In Canvas go to Grades → Import, upload
-          it, and when it asks about the unknown column let it create the
+          Canvas's own import format. One point per lecture in which the
+          student answered at least the share of bouts set below — four
+          questions asked twice is eight chances, and 75% of them is six.
+          Answering is the bar rather than logging in, because a login only
+          proves someone has the session code. Keyed on each student's ids
+          from the synced roster. In Canvas go to Grades → Import, upload it,
+          and when it asks about the unknown column let it create the
           assignment.
         </p>
         <div class="range">
@@ -55,6 +57,18 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
               name="assignment"
               placeholder="Quiz participation"
             />
+          </label>
+          <label>
+            Answered at least
+            <input
+              type="number"
+              class="pct"
+              min="0"
+              max="100"
+              step="5"
+              [(ngModel)]="canvasThreshold"
+              name="threshold"
+            />%
           </label>
           <a class="download" [href]="canvasCsvUrl()" download>Download for Canvas</a>
         </div>
@@ -248,6 +262,7 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
       .term-report .note { font-size: 0.85rem; color: #666; margin: 0.5rem 0; }
       .range { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
       .range label { font-size: 0.9rem; }
+      .range .pct { width: 4rem; }
       .download { border: 1px solid var(--border); border-radius: 6px;
                   padding: 0.35rem 0.7rem; text-decoration: none; color: inherit; }
       .quiz { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
@@ -279,6 +294,8 @@ export class TeacherDashboardComponent implements OnInit {
   reportTo = '';
   /** The Canvas assignment column name; blank lets the server default apply. */
   canvasAssignment = '';
+  /** Share of a lecture's bouts a student must answer to be counted present. */
+  canvasThreshold = 75;
   ephemeralStorage = signal(false);
   draft: QuestionDraft = this.blankDraft();
 
@@ -390,6 +407,7 @@ export class TeacherDashboardComponent implements OnInit {
       this.reportFrom,
       this.reportTo,
       this.canvasAssignment.trim(),
+      this.canvasThreshold,
     );
   }
 

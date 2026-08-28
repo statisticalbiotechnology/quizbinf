@@ -458,26 +458,39 @@ URL so the QR code resolves. See the README.
   (`no (1/2)`) so the all-or-nothing rule cannot silently hide a student who
   answered most of them. Personal data, so teacher-only and labelled
   do-not-project like the Participants view.
-- **The Canvas gradebook file asks a weaker question, on purpose.**
-  `GET /api/reports/canvas-participation.csv` scores **one point per session
-  the student turned up to** — logging in is the whole bar, however many
-  questions they answered — while the plain report above asks whether they
-  answered both bouts of everything. Two reports, two questions: the gradebook
-  one is participation credit for being in the room, so do not "fix" it to
-  agree with the other. `tests/test_export.py` pins the difference with a
-  student who answers one bout of two and scores full marks here and none
-  there. The file carries the identifying columns Canvas's own gradebook
-  export uses, one assignment column, and a *Points Possible* row; a column
-  name matching no existing assignment makes Canvas offer to create one, which
-  is how the teacher gets a participation Assignment without setting anything
-  up first. Both `canvas_user_id` and `kthid` go out, since Canvas matches on
-  its own id first and falls back to the SIS ones, and a manually created
-  course may have no SIS ids at all — the roster is the only bridge from the
-  KTH username the app signs students in under. A student with no roster row
-  is still listed, with blank ids: Canvas skips that row, and the blank is what
+- **The Canvas gradebook file asks a different question, on purpose.**
+  `GET /api/reports/canvas-participation.csv` scores **one point per lecture in
+  which the student answered at least 75% of the bouts that ran** — four
+  questions asked twice is eight chances, of which six must be taken
+  (`DEFAULT_ANSWER_THRESHOLD`, overridable per download). Three decisions worth
+  keeping:
+  - **Answering, not logging in.** A login proves only that someone has the
+    session code, which travels by text message; answering most of the bouts
+    means being there while each submission window was open, which is as close
+    to attendance as this app gets.
+  - **Not every bout.** Somebody always misses a window by seconds, loses
+    signal, or arrives during the first question. That is what the threshold
+    buys, and lowering the bar to *some* answering would give the login hole
+    back.
+  - **A lecture that ran no rounds is dropped from the denominator**, not
+    scored zero: nothing was asked, so it can neither be attended nor missed.
+
+  It is not the same measure as the plain report above, which asks whether the
+  student answered *both* bouts of every question asked twice — so do not
+  "fix" either to agree with the other. `tests/test_export.py` pins the
+  divergence with a student who scores full marks in one and nothing in the
+  other. The file carries the identifying columns Canvas's own gradebook export
+  uses, one assignment column, and a *Points Possible* row; a column name
+  matching no existing assignment makes Canvas offer to create one, which is
+  how the teacher gets a participation Assignment without setting anything up
+  first. Both `canvas_user_id` and `kthid` go out, since Canvas matches on its
+  own id first and falls back to the SIS ones, and a manually created course
+  may have no SIS ids at all — the roster is the only bridge from the KTH
+  username the app signs students in under. A student with no roster row is
+  still listed, with blank ids: Canvas skips that row, and the blank is what
   tells the teacher who it happened to instead of leaving them to wonder why
   someone has no mark. The teacher is excluded, having run the lecture rather
-  than attended it.
+  than sat it.
 
 ## Local development
 
@@ -549,7 +562,7 @@ alembic upgrade head
 | `GET /api/sessions/{code}/participation` | teacher | **per-student** correctness (personal data) |
 | `GET /api/sessions/{code}/participation.csv` | teacher | the same as CSV |
 | `GET /api/reports/participation[.csv]?from=&to=` | teacher | **end of term:** attendance across every session, yes/no per session, no correctness |
-| `GET /api/reports/canvas-participation.csv?assignment=` | teacher | attendance (1 point per session attended) in Canvas's gradebook-import format |
+| `GET /api/reports/canvas-participation.csv?assignment=&threshold=` | teacher | 1 point per lecture where ≥75% of bouts were answered, in Canvas's gradebook-import format |
 | `GET /api/roster/status` | teacher | is Canvas configured, and what has been synced |
 | `GET /api/roster/courses` | teacher | Canvas courses the token's owner teaches |
 | `POST /api/roster/sync?course_id=` | teacher | mirror a course's students into the local roster |

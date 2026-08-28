@@ -267,16 +267,28 @@ export class ApiService {
   }
 
   /**
-   * The same attendance, shaped for Canvas's gradebook importer.
+   * Attendance for Canvas's gradebook importer.
    *
-   * One column per assignment is Canvas's format; a column name matching no
-   * existing assignment makes Canvas offer to create one.
+   * One point per lecture in which the student answered at least
+   * `thresholdPercent` of the bouts. One column per assignment is Canvas's
+   * format; a column name matching no existing assignment makes Canvas offer
+   * to create one.
    */
-  canvasParticipationCsvUrl(from: string, to: string, assignment: string): string {
+  canvasParticipationCsvUrl(
+    from: string,
+    to: string,
+    assignment: string,
+    thresholdPercent?: number,
+  ): string {
     const query = new URLSearchParams();
     if (from) query.set('from', from);
     if (to) query.set('to', to);
     if (assignment) query.set('assignment', assignment);
+    // The server takes a fraction; the form asks for a percentage, which is
+    // what a teacher thinks in.
+    if (thresholdPercent != null && !Number.isNaN(thresholdPercent)) {
+      query.set('threshold', String(Math.min(100, Math.max(0, thresholdPercent)) / 100));
+    }
     const q = query.toString();
     return `${API_BASE}/api/reports/canvas-participation.csv${q ? '?' + q : ''}`;
   }
