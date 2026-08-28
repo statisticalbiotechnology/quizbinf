@@ -255,6 +255,27 @@ export class ApiService {
   }
 
   /**
+   * One lecture's attendance in Canvas's gradebook-import format.
+   *
+   * Same bar as the end-of-term file — the student answered at least
+   * `thresholdPercent` of this session's bouts — but scored out of one, so it
+   * goes into Canvas as that lecture's own assignment.
+   */
+  sessionCanvasCsvUrl(
+    code: string,
+    assignment: string,
+    thresholdPercent?: number,
+  ): string {
+    const query = new URLSearchParams();
+    if (assignment) query.set('assignment', assignment);
+    if (thresholdPercent != null && !Number.isNaN(thresholdPercent)) {
+      query.set('threshold', String(Math.min(100, Math.max(0, thresholdPercent)) / 100));
+    }
+    const q = query.toString();
+    return `${API_BASE}/api/sessions/${code}/canvas-participation.csv${q ? '?' + q : ''}`;
+  }
+
+  /**
    * Attendance across every session in a date range — the end-of-term record.
    * Personal data: teacher-only, and not something to project.
    */

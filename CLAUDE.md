@@ -475,6 +475,15 @@ URL so the QR code resolves. See the README.
   - **A lecture that ran no rounds is dropped from the denominator**, not
     scored zero: nothing was asked, so it can neither be attended nor missed.
 
+  **The same file exists per lecture** (`GET
+  /api/sessions/{code}/canvas-participation.csv`, on the Participants page),
+  scored out of one so a single lecture can be marked without waiting for the
+  term to end. Both go through one `session_answering`, so the two cannot
+  disagree about a lecture they both cover; the column is named for the
+  lecture and its date by default, since two runs of the same quiz would
+  otherwise land in one Canvas column. Personal data like the rest of that
+  page, so teacher-only and restricted to the session's owner.
+
   It is not the same measure as the plain report above, which asks whether the
   student answered *both* bouts of every question asked twice — so do not
   "fix" either to agree with the other. `tests/test_export.py` pins the
@@ -561,6 +570,7 @@ alembic upgrade head
 | `GET /api/sessions/{code}/participants` | teacher | how many joined (counts only, no names) |
 | `GET /api/sessions/{code}/participation` | teacher | **per-student** correctness (personal data) |
 | `GET /api/sessions/{code}/participation.csv` | teacher | the same as CSV |
+| `GET /api/sessions/{code}/canvas-participation.csv?assignment=&threshold=` | teacher | **one lecture** scored out of one, in Canvas's gradebook-import format |
 | `GET /api/reports/participation[.csv]?from=&to=` | teacher | **end of term:** attendance across every session, yes/no per session, no correctness |
 | `GET /api/reports/canvas-participation.csv?assignment=&threshold=` | teacher | 1 point per lecture where ≥75% of bouts were answered, in Canvas's gradebook-import format |
 | `GET /api/roster/status` | teacher | is Canvas configured, and what has been synced |

@@ -339,6 +339,44 @@ def semester_participation(
 DEFAULT_ANSWER_THRESHOLD = 0.75
 
 
+def session_answering(
+    db: Session, session: QuizSession
+) -> tuple[dict[int, User], dict[int, int], int]:
+    """Who was in this lecture, how many bouts each answered, and how many ran.
+
+    One definition of a "chance" and of who counts, shared by the per-session
+    and end-of-term Canvas files so the two cannot disagree about the same
+    lecture. Every round is one chance; a round whose question was deleted
+    under an older build is not counted as a chance nobody took.
+
+    A student who joined and answered nothing is in `users` with no entry in
+    the counts — listed with a zero rather than left out, since they are
+    exactly who the teacher wants to see.
+    """
+    rounds = [r for r in session.rounds if r.question is not None]
+    users: dict[int, User] = {}
+    answered: dict[int, int] = {}
+
+    def note(user: User) -> bool:
+        # The teacher runs the lecture rather than sitting it, and may well
+        # have answered while testing the student view.
+        if user.id == session.quiz.owner_id:
+            return False
+        users[user.id] = user
+        return True
+
+    for round_ in rounds:
+        for answer in round_.answers:
+            if note(answer.user):
+                answered[answer.user_id] = answered.get(answer.user_id, 0) + 1
+    for participant in db.scalars(
+        select(SessionParticipant).where(SessionParticipant.session_id == session.id)
+    ):
+        note(participant.user)
+
+    return users, answered, len(rounds)
+
+
 def canvas_participation(
     db: Session,
     teacher: User,
@@ -387,34 +425,14 @@ def canvas_participation(
     scored: list[QuizSession] = []
 
     for session in sessions_in_range(db, teacher, start, end):
-        # A round whose question was deleted under an older build cannot be
-        # counted as a chance nobody took.
-        rounds = [r for r in session.rounds if r.question is not None]
-        if not rounds:
+        seen, taken, ran = session_answering(db, session)
+        if not ran:
             continue
         scored.append(session)
-        chances[session.id] = len(rounds)
-
-        def note(user: User) -> None:
-            # The teacher runs the lecture rather than sitting it, and may well
-            # have answered while testing the student view.
-            if user.id != session.quiz.owner_id:
-                users[user.id] = user
-
-        for round_ in rounds:
-            for answer in round_.answers:
-                note(answer.user)
-                if answer.user_id in users:
-                    counts = answered.setdefault(answer.user_id, {})
-                    counts[session.id] = counts.get(session.id, 0) + 1
-        # Listed with a zero rather than left out: a student who turned up and
-        # answered nothing is exactly who the teacher wants to see.
-        for participant in db.scalars(
-            select(SessionParticipant).where(
-                SessionParticipant.session_id == session.id
-            )
-        ):
-            note(participant.user)
+        chances[session.id] = ran
+        users.update(seen)
+        for user_id, count in taken.items():
+            answered.setdefault(user_id, {})[session.id] = count
 
     roster = {
         entry.username: entry
@@ -448,6 +466,58 @@ def canvas_participation(
             {"code": s.code, "title": s.quiz.title, "date": s.created_at.date().isoformat()}
             for s in scored
         ],
+        "students": rows,
+    }
+
+
+def session_canvas_participation(
+    db: Session,
+    session: QuizSession,
+    course_id: int,
+    threshold: float = DEFAULT_ANSWER_THRESHOLD,
+) -> dict:
+    """The Canvas gradebook file for a single lecture.
+
+    Same bar as the end-of-term file, applied to one session: the student
+    scores the point if they answered at least `threshold` of the bouts that
+    ran. Out of one rather than out of a term's lectures, so it goes in as its
+    own Canvas assignment for that lecture.
+
+    Scored through the same `session_answering` as the term file, so the two
+    cannot disagree about a lecture they both cover.
+    """
+    users, taken, chances = session_answering(db, session)
+    roster = {
+        entry.username: entry
+        for entry in db.scalars(
+            select(RosterEntry).where(RosterEntry.course_id == course_id)
+        )
+    }
+
+    rows = []
+    for user_id, user in sorted(users.items(), key=lambda kv: kv[1].username):
+        # No rounds ran, so nothing could be answered or missed: score nobody
+        # rather than mark the whole class down for a lecture that asked
+        # nothing.
+        met = bool(chances) and taken.get(user_id, 0) / chances >= threshold
+        entry = roster.get(user.username)
+        rows.append(
+            {
+                "name": entry.display_name if entry else user.display_name,
+                "username": user.username,
+                "canvas_user_id": entry.canvas_user_id if entry else "",
+                "sis_user_id": (entry.kthid if entry else None) or "",
+                "answered": taken.get(user_id, 0),
+                "attended": 1 if met else 0,
+                "matched": entry is not None,
+            }
+        )
+
+    return {
+        "threshold": threshold,
+        "bouts": chances,
+        "date": session.created_at.date().isoformat(),
+        "title": session.quiz.title,
         "students": rows,
     }
 

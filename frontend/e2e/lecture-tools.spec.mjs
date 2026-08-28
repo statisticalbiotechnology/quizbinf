@@ -201,3 +201,59 @@ test('the questions can be downloaded as study material', async ({ browser }) =>
 
   await ctx.close();
 });
+
+
+test('one lecture can be marked in Canvas from the Participants page', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await loginAs(page, 'teacher');
+  await page.waitForURL('**/teacher');
+
+  const quiz = await newQuiz(page, 'Marked lecture');
+  await addQuestion(quiz, 'Which aligns locally', ['Smith-Waterman', 'Needleman-Wunsch']);
+  await quiz.getByRole('button', { name: 'Run session ▶' }).click();
+  await page.waitForURL('**/teacher/session/*/join');
+  await expect(page.locator('code.url')).toContainText('/s/');
+  const sessionPath = new URL(
+    (await page.locator('code.url').textContent()).trim(),
+  ).pathname;
+
+  // One student answers both bouts, one only the first.
+  const bothCtx = await browser.newContext();
+  const both = await bothCtx.newPage();
+  await loginAs(both, 'answeredboth');
+  await both.goto(sessionPath);
+  const halfCtx = await browser.newContext();
+  const half = await halfCtx.newPage();
+  await loginAs(half, 'answeredhalf');
+  await half.goto(sessionPath);
+
+  await page.getByRole('link', { name: 'Control', exact: true }).click();
+  for (const phase of ['1st bout (pre)', '2nd bout (post)']) {
+    await page.getByRole('button', { name: `Open ${phase}` }).click();
+    await both.getByRole('button', { name: 'Smith-Waterman' }).click();
+    if (phase.startsWith('1st')) {
+      await half.getByRole('button', { name: 'Smith-Waterman' }).click();
+    }
+    await page.getByRole('button', { name: 'Halt submission' }).click();
+  }
+
+  await page.getByRole('link', { name: 'Participants' }).click();
+  await page.getByText('Mark this lecture in Canvas').click();
+  const link = page.getByRole('link', { name: 'Download for Canvas' });
+  await expect(link).toBeVisible();
+
+  const csv = await page.request.get(await link.getAttribute('href'));
+  expect(csv.status()).toBe(200);
+  // csv writes CRLF, which a plain split on \n would leave on each row.
+  const rows = (await csv.text()).trim().split(/\r?\n/);
+  // Two bouts ran: both/2 is 100%, half/2 is 50% — under the 75% bar.
+  expect(rows.find((r) => r.includes('answeredboth'))).toMatch(/,1$/);
+  expect(rows.find((r) => r.includes('answeredhalf'))).toMatch(/,0$/);
+
+  await ctx.close();
+  await bothCtx.close();
+  await halfCtx.close();
+});

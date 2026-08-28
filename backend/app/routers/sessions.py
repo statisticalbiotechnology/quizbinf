@@ -6,7 +6,7 @@ import json
 import qrcode
 import qrcode.constants
 import qrcode.image.svg
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
@@ -272,6 +272,58 @@ def participation(
     return ParticipationReportOut(
         questions=session.quiz.questions,
         rows=service.participation_report(db, session),
+    )
+
+
+@router.get("/{code}/canvas-participation.csv", include_in_schema=False)
+def session_canvas_participation_csv(
+    code: str,
+    assignment: str | None = None,
+    threshold: float = Query(service.DEFAULT_ANSWER_THRESHOLD, ge=0.0, le=1.0),
+    course_id: int | None = None,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """This one lecture's attendance, in Canvas's gradebook-import format.
+
+    One point, scored on the same bar as the end-of-term file: the student
+    answered at least `threshold` of this session's bouts. It goes into Canvas
+    as its own assignment, so the column is named for the lecture and its date
+    by default — two runs of the same quiz would otherwise land in one column.
+
+    Personal data, like every other view of who did what: teacher-only, and
+    restricted to the session's own owner.
+    """
+    session = _owned_session(db, code, teacher)
+    course = course_id or settings.canvas_course_id
+    report = service.session_canvas_participation(db, session, course, threshold)
+    column = assignment or f"{report['title']} {report['date']}"
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Student", "ID", "SIS User ID", "SIS Login ID", column])
+    writer.writerow(["    Points Possible", "", "", "", 1])
+    for row in report["students"]:
+        writer.writerow(
+            [
+                row["name"],
+                row["canvas_user_id"],
+                row["sis_user_id"],
+                row["username"],
+                row["attended"],
+            ]
+        )
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="canvas-participation-{code}.csv"'
+            ),
+            "Cache-Control": "no-store",
+        },
     )
 
 

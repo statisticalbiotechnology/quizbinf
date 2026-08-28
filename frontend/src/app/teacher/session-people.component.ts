@@ -1,4 +1,5 @@
 import { Component, OnInit, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 
 import { ApiService } from '../api.service';
 import { ParticipantRow, Question } from '../models';
@@ -16,6 +17,7 @@ import { SessionFeed } from './session-feed.service';
 @Component({
   selector: 'app-teacher-session-people',
   standalone: true,
+  imports: [FormsModule],
   template: `
     <div class="wrap">
       <p class="warning">
@@ -29,6 +31,45 @@ import { SessionFeed } from './session-feed.service';
         </button>
         <a class="csv" [href]="csvUrl" download>Download CSV</a>
       </div>
+
+      <details class="canvas">
+        <summary>Mark this lecture in Canvas</summary>
+        <p class="note">
+          One point for each student who answered at least the share of this
+          lecture's bouts set here — the same bar as the end-of-term file,
+          scored out of one so it goes in as this lecture's own assignment.
+          Keyed on the ids from the synced roster. Left blank, the column is
+          named for this lecture and the date it ran.
+        </p>
+        <div class="row">
+          <label>
+            Assignment
+            <input
+              type="text"
+              [(ngModel)]="assignment"
+              name="assignment"
+              [placeholder]="defaultAssignment()"
+            />
+          </label>
+          <label>
+            Answered at least
+            <input
+              type="number"
+              class="pct"
+              min="0"
+              max="100"
+              step="5"
+              [(ngModel)]="threshold"
+              name="threshold"
+            />%
+          </label>
+          <a class="csv" [href]="canvasCsvUrl()" download>Download for Canvas</a>
+        </div>
+        <p class="note">
+          In Canvas: Grades → Actions → Import, upload it, and let it create
+          the assignment when it asks about the unrecognised column.
+        </p>
+      </details>
 
       @if (!rows().length) {
         <p class="empty">Nobody has joined this session yet.</p>
@@ -83,6 +124,13 @@ import { SessionFeed } from './session-feed.service';
       .warning { background: #fdf3f2; border: 1px solid #e6b8b2; border-radius: 6px;
                  padding: 0.6rem 0.8rem; color: #8a2b20; }
       .actions { display: flex; gap: 0.6rem; align-items: center; margin: 1rem 0; }
+      .canvas { border: 1px solid #ddd; border-radius: 8px; padding: 0.6rem 1rem;
+                margin: 0 0 1rem; }
+      .canvas summary { cursor: pointer; font-weight: 600; }
+      .canvas .note { font-size: 0.85rem; color: #666; margin: 0.5rem 0; }
+      .canvas .row { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
+      .canvas label { font-size: 0.9rem; }
+      .canvas .pct { width: 4rem; }
       .csv { padding: 0.5rem 0.9rem; border: 1px solid var(--border); border-radius: 6px;
              text-decoration: none; }
       table { border-collapse: collapse; width: 100%; }
@@ -104,6 +152,10 @@ export class TeacherSessionPeopleComponent implements OnInit {
   questions = signal<Question[]>([]);
   revealed = signal(false);
   csvUrl = '';
+  /** Blank lets the server name the column for the lecture and its date. */
+  assignment = '';
+  /** Share of this lecture's bouts a student must answer to score the point. */
+  threshold = 75;
 
   constructor(public feed: SessionFeed, private api: ApiService) {}
 
@@ -113,6 +165,24 @@ export class TeacherSessionPeopleComponent implements OnInit {
       this.questions.set(r.questions);
       this.rows.set(r.rows);
     });
+  }
+
+  /**
+   * A hint at the column name, not the name itself.
+   *
+   * The server appends the *lecture's* date, which this page does not know —
+   * guessing today's would be wrong for a session downloaded later.
+   */
+  defaultAssignment(): string {
+    return this.feed.state()?.quiz_title ?? 'the lecture and its date';
+  }
+
+  canvasCsvUrl(): string {
+    return this.api.sessionCanvasCsvUrl(
+      this.feed.code(),
+      this.assignment.trim(),
+      this.threshold,
+    );
   }
 
   cls(v: boolean | null): string {
