@@ -36,6 +36,47 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
           <a class="download" [href]="semesterCsvUrl()" download>Download CSV</a>
         </div>
         <p class="note">Leave the dates empty for everything.</p>
+
+        <p class="note">
+          <strong>For the Canvas gradebook:</strong> the second file below is
+          Canvas's own import format. One point per lecture in which the
+          student answered at least the share of bouts set below — four
+          questions asked twice is eight chances, and 75% of them is six.
+          Answering is the bar rather than logging in, because a login only
+          proves someone has the session code. Keyed on each student's ids
+          from the synced roster. In Canvas go to Grades → Import, upload it,
+          and when it asks about the unknown column let it create the
+          assignment.
+        </p>
+        <div class="range">
+          <label>
+            Assignment
+            <input
+              type="text"
+              [(ngModel)]="canvasAssignment"
+              name="assignment"
+              placeholder="Quiz participation"
+            />
+          </label>
+          <label>
+            Answered at least
+            <input
+              type="number"
+              class="pct"
+              min="0"
+              max="100"
+              step="5"
+              [(ngModel)]="canvasThreshold"
+              name="threshold"
+            />%
+          </label>
+          <a class="download" [href]="canvasCsvUrl()" download>Download for Canvas</a>
+        </div>
+        <p class="note">
+          A student who is not on the synced roster is still listed, with no id
+          — Canvas will skip that row, and the blank is there so you can see who
+          it happened to rather than wonder later.
+        </p>
       </details>
 
       <details class="term-report roster" (toggle)="onRosterOpened($event)">
@@ -131,6 +172,10 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
             <button (click)="startSession(quiz)">Run session ▶</button>
           </header>
 
+          @if (reorderError(); as msg) {
+            <p class="error">{{ msg }}</p>
+          }
+
           <ol>
             @for (q of quiz.questions; track q.id) {
               <li>
@@ -151,6 +196,20 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                          draws at its natural pixel size. -->
                     <span class="qtext" [innerHTML]="q.text_html"></span>
                     <span class="q-actions">
+                      <button
+                        type="button"
+                        class="move"
+                        title="Ask this one earlier"
+                        [disabled]="$first || reordering()"
+                        (click)="move(quiz, $index, -1)"
+                      >↑</button>
+                      <button
+                        type="button"
+                        class="move"
+                        title="Ask this one later"
+                        [disabled]="$last || reordering()"
+                        (click)="move(quiz, $index, 1)"
+                      >↓</button>
                       <button type="button" (click)="startEdit(q)">Edit</button>
                       <button type="button" class="danger" (click)="removeQuestion(quiz, q)">
                         Delete
@@ -203,6 +262,7 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
       .term-report .note { font-size: 0.85rem; color: #666; margin: 0.5rem 0; }
       .range { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
       .range label { font-size: 0.9rem; }
+      .range .pct { width: 4rem; }
       .download { border: 1px solid var(--border); border-radius: 6px;
                   padding: 0.35rem 0.7rem; text-decoration: none; color: inherit; }
       .quiz { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
@@ -215,6 +275,7 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
       .q-row .qtext { min-width: 0; }
       .q-actions { display: flex; gap: 0.3rem; flex-shrink: 0; }
       .q-actions button { font-size: 0.8rem; padding: 0.2rem 0.5rem; }
+      .q-actions .move { padding: 0.2rem 0.4rem; line-height: 1; }
       .q-actions .danger { color: #c0392b; }
       .roster code { background: #f4f4f4; padding: 0 0.25rem; border-radius: 3px;
                      font-size: 0.85em; word-break: break-all; }
@@ -231,6 +292,10 @@ export class TeacherDashboardComponent implements OnInit {
   formError = '';
   reportFrom = '';
   reportTo = '';
+  /** The Canvas assignment column name; blank lets the server default apply. */
+  canvasAssignment = '';
+  /** Share of a lecture's bouts a student must answer to be counted present. */
+  canvasThreshold = 75;
   ephemeralStorage = signal(false);
   draft: QuestionDraft = this.blankDraft();
 
@@ -240,6 +305,8 @@ export class TeacherDashboardComponent implements OnInit {
   editError = signal('');
   /** Refusals keyed by question id, so each row explains its own failure. */
   deleteError = signal<Record<number, string>>({});
+  reordering = signal(false);
+  reorderError = signal('');
 
   /** Which questions have had their answer revealed, by explicit click. */
   revealed = signal<Record<number, boolean>>({});
@@ -335,6 +402,15 @@ export class TeacherDashboardComponent implements OnInit {
     return this.api.semesterParticipationCsvUrl(this.reportFrom, this.reportTo);
   }
 
+  canvasCsvUrl(): string {
+    return this.api.canvasParticipationCsvUrl(
+      this.reportFrom,
+      this.reportTo,
+      this.canvasAssignment.trim(),
+      this.canvasThreshold,
+    );
+  }
+
   createQuiz(): void {
     if (!this.newTitle.trim()) return;
     this.api.createQuiz(this.newTitle.trim()).subscribe(() => {
@@ -395,6 +471,34 @@ export class TeacherDashboardComponent implements OnInit {
    * stranded — so the refusal is shown against the question rather than
    * swallowed.
    */
+  /**
+   * Move a question one place earlier or later in the running order.
+   *
+   * The whole order goes to the server, not the move, so two edits cannot
+   * interleave into a shuffle. The list is re-read from the response rather
+   * than assumed, so a refusal leaves the view showing what is really stored.
+   */
+  move(quiz: Quiz, index: number, delta: number): void {
+    const ids = quiz.questions.map((q) => q.id);
+    const target = index + delta;
+    if (target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+
+    this.reordering.set(true);
+    this.reorderError.set('');
+    this.api.reorderQuestions(quiz.id, ids).subscribe({
+      next: (questions) => {
+        quiz.questions = questions;
+        this.reordering.set(false);
+      },
+      error: () => {
+        this.reorderError.set('Could not reorder the questions.');
+        this.reordering.set(false);
+        this.reload();
+      },
+    });
+  }
+
   removeQuestion(quiz: Quiz, q: Question): void {
     if (!confirm('Delete this question? This cannot be undone.')) return;
     this.deleteError.update((errors) => {

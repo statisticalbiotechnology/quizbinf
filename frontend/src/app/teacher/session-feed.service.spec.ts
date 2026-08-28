@@ -110,6 +110,28 @@ describe('SessionFeed projection rules', () => {
     expect(feed.stage()).toBe('waiting');
   });
 
+  it('counts the lecture as started once a bout has opened', () => {
+    // Which is what moves the projected screen from "here is the QR code" to
+    // "here is the question, and the code in the corner".
+    expect(feed.started()).toBeFalse();
+
+    feed.state.set({
+      code: 'abc123',
+      quiz_id: 1,
+      quiz_title: 'Bioinf',
+      open_round: openRound(1, 'pre'),
+      question: q1,
+      my_choice_id: null,
+    });
+    expect(feed.started()).toBeTrue();
+  });
+
+  it('stays started between the bouts, when no round is open', () => {
+    feed.comparisons.set({ 1: comparison(1, true) });
+    expect(feed.openRound()).toBeNull();
+    expect(feed.started()).toBeTrue();
+  });
+
   it('has nothing left to project once every question has run twice', () => {
     feed.comparisons.set({
       1: comparison(1, true, true),

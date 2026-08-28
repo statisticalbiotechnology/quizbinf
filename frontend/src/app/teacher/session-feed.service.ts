@@ -131,6 +131,19 @@ export class SessionFeed implements OnDestroy {
     return midway ?? this.questions().find((q) => !this.ran(q, 'pre')) ?? null;
   }
 
+  /**
+   * Whether the lecture has moved past recruitment.
+   *
+   * The projected screen gives the QR code the room while students are still
+   * arriving, and hands that space to the question once the first bout opens —
+   * but the code stays on screen, small, because someone always fails to log
+   * in during the scramble.
+   */
+  started(): boolean {
+    if (this.openRound()) return true;
+    return this.questions().some((q) => this.ran(q, 'pre') || this.ran(q, 'post'));
+  }
+
   /** Where that question stands, so the projection can label itself. */
   stage(): 'pre' | 'post' | 'discuss' | 'waiting' | 'done' {
     const q = this.currentQuestion();

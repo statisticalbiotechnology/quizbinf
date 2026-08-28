@@ -217,6 +217,31 @@ def participation_report(db: Session, session: QuizSession) -> list[dict]:
     return rows
 
 
+def sessions_in_range(
+    db: Session,
+    teacher: User,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[QuizSession]:
+    """The teacher's own sessions, oldest first, within an optional date range.
+
+    Shared by both end-of-term reports so they cannot disagree about which
+    lectures are in scope — including the end date being inclusive, which is
+    what a person means by "to the 12th".
+    """
+    query = (
+        select(QuizSession)
+        .join(Quiz, QuizSession.quiz_id == Quiz.id)
+        .where(Quiz.owner_id == teacher.id)
+        .order_by(QuizSession.created_at, QuizSession.id)
+    )
+    if start is not None:
+        query = query.where(QuizSession.created_at >= datetime.combine(start, time.min))
+    if end is not None:
+        query = query.where(QuizSession.created_at <= datetime.combine(end, time.max))
+    return list(db.scalars(query))
+
+
 def semester_participation(
     db: Session,
     teacher: User,
@@ -239,18 +264,7 @@ def semester_participation(
     visible: a strict all-or-nothing verdict would otherwise hide a student
     who answered three of four questions.
     """
-    query = (
-        select(QuizSession)
-        .join(Quiz, QuizSession.quiz_id == Quiz.id)
-        .where(Quiz.owner_id == teacher.id)
-        .order_by(QuizSession.created_at, QuizSession.id)
-    )
-    if start is not None:
-        query = query.where(QuizSession.created_at >= datetime.combine(start, time.min))
-    if end is not None:
-        # Inclusive of the end date, which is what a person means by a range.
-        query = query.where(QuizSession.created_at <= datetime.combine(end, time.max))
-    sessions = list(db.scalars(query))
+    sessions = sessions_in_range(db, teacher, start, end)
 
     users: dict[int, User] = {}
     # user_id -> session_id -> (pairs_completed, pairs_asked)
@@ -313,6 +327,126 @@ def semester_participation(
         "sessions": [
             {"code": s.code, "title": s.quiz.title, "date": s.created_at.date().isoformat()}
             for s in sessions
+        ],
+        "students": rows,
+    }
+
+
+#: How much of a lecture's answering a student must do to be counted present.
+#: Not all of it: somebody always misses a window by seconds, loses signal, or
+#: arrives during the first question, and none of that is absence. Four
+#: questions asked twice is eight chances, of which six must be taken.
+DEFAULT_ANSWER_THRESHOLD = 0.75
+
+
+def canvas_participation(
+    db: Session,
+    teacher: User,
+    course_id: int,
+    start: date | None = None,
+    end: date | None = None,
+    threshold: float = DEFAULT_ANSWER_THRESHOLD,
+) -> dict:
+    """Attendance for the gradebook: one point per lecture the student worked.
+
+    Worked, not attended. The bar is answering at least `threshold` of the
+    bouts the lecture actually ran — every round counts as one chance, so four
+    questions asked twice is eight chances and six of them must be taken.
+
+    The bar is answering rather than logging in because a login proves nothing
+    about being in the room: a student can sign in from anywhere. Answering
+    most of the bouts means being present while each submission window was
+    open, which is as close to attendance as this app can get. It is
+    deliberately not *every* bout — someone always misses a window by seconds
+    — which is what the threshold buys.
+
+    A session that ran no rounds is dropped rather than scored: there was
+    nothing to answer, so it can neither be attended nor missed, and leaving it
+    in the denominator would mark the whole class down for a lecture that never
+    asked anything.
+
+    Canvas matches an imported row on an identifier it already holds, so the
+    figures are useless on their own: they are keyed by KTH username, which
+    Canvas does not store as such. The roster is what bridges the two, and it
+    carries both identifiers Canvas will match on — the Canvas user id it tries
+    first, and `kthid` (Canvas `sis_user_id`) behind it. Emitting both means an
+    import does not depend on the course having SIS ids, which a manually
+    created course may not.
+
+    A student with no roster row is still reported, with no identifier and
+    flagged as unmatched. Canvas will skip that row on import, but dropping it
+    here would hide the mismatch from the teacher, and "why is this student
+    missing a mark" is a worse problem to debug in the gradebook than in the
+    file.
+    """
+    users: dict[int, User] = {}
+    # user_id -> session_id -> bouts answered
+    answered: dict[int, dict[int, int]] = {}
+    # session_id -> bouts run
+    chances: dict[int, int] = {}
+    scored: list[QuizSession] = []
+
+    for session in sessions_in_range(db, teacher, start, end):
+        # A round whose question was deleted under an older build cannot be
+        # counted as a chance nobody took.
+        rounds = [r for r in session.rounds if r.question is not None]
+        if not rounds:
+            continue
+        scored.append(session)
+        chances[session.id] = len(rounds)
+
+        def note(user: User) -> None:
+            # The teacher runs the lecture rather than sitting it, and may well
+            # have answered while testing the student view.
+            if user.id != session.quiz.owner_id:
+                users[user.id] = user
+
+        for round_ in rounds:
+            for answer in round_.answers:
+                note(answer.user)
+                if answer.user_id in users:
+                    counts = answered.setdefault(answer.user_id, {})
+                    counts[session.id] = counts.get(session.id, 0) + 1
+        # Listed with a zero rather than left out: a student who turned up and
+        # answered nothing is exactly who the teacher wants to see.
+        for participant in db.scalars(
+            select(SessionParticipant).where(
+                SessionParticipant.session_id == session.id
+            )
+        ):
+            note(participant.user)
+
+    roster = {
+        entry.username: entry
+        for entry in db.scalars(
+            select(RosterEntry).where(RosterEntry.course_id == course_id)
+        )
+    }
+
+    rows = []
+    for user_id, user in sorted(users.items(), key=lambda kv: kv[1].username):
+        met = 0
+        for session in scored:
+            taken = answered.get(user_id, {}).get(session.id, 0)
+            if taken / chances[session.id] >= threshold:
+                met += 1
+        entry = roster.get(user.username)
+        rows.append(
+            {
+                "name": entry.display_name if entry else user.display_name,
+                "username": user.username,
+                "canvas_user_id": entry.canvas_user_id if entry else "",
+                "sis_user_id": (entry.kthid if entry else None) or "",
+                "attended": met,
+                "matched": entry is not None,
+            }
+        )
+
+    return {
+        "threshold": threshold,
+        "sessions": [
+            {"code": s.code, "title": s.quiz.title, "date": s.created_at.date().isoformat()}
+            for s in scored
         ],
         "students": rows,
     }
@@ -568,6 +702,32 @@ def update_question(
     db.commit()
     db.refresh(question)
     return question
+
+
+def reorder_questions(db: Session, quiz: Quiz, question_ids: list[int]) -> list[Question]:
+    """Put a quiz's questions in the given order.
+
+    Takes the complete order rather than a "move this one up", so the result
+    does not depend on what the client thought the order was: two teachers
+    editing the same quiz cannot interleave two moves into a shuffle. The list
+    must therefore be exactly this quiz's questions, each once — anything else
+    is a stale client, and renumbering from it would silently drop or duplicate
+    a question.
+
+    Safe after a question has been asked: rounds point at question ids, never
+    at positions, so reordering moves nothing but the running order.
+    """
+    current = {q.id: q for q in quiz.questions}
+    if len(question_ids) != len(set(question_ids)) or set(question_ids) != current.keys():
+        raise RuleViolation(
+            "The new order must list each of this quiz's questions exactly once"
+        )
+
+    for position, question_id in enumerate(question_ids):
+        current[question_id].position = position
+    db.commit()
+    db.refresh(quiz)
+    return list(quiz.questions)
 
 
 def delete_question(db: Session, question: Question) -> None:

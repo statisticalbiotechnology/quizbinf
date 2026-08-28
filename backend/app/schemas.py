@@ -71,6 +71,16 @@ class QuestionEdit(BaseModel):
         return self
 
 
+class QuestionOrder(BaseModel):
+    """The complete running order, as question ids.
+
+    Complete rather than a single move, so the server can reject a stale
+    client instead of renumbering from an order that no longer exists.
+    """
+
+    question_ids: list[int] = Field(min_length=1)
+
+
 class QuizIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 

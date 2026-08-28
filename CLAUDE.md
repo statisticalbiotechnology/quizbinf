@@ -50,6 +50,21 @@ Key product requirements:
   halted — `revealCorrect()`, not `shown()`. `e2e/projection.spec.mjs` pins
   both, and it was written to fail against the version that revealed after the
   first bout.
+- **The Control view narrows to the live question.** While a round is open it
+  shows only the question being asked — the teacher is driving from that screen
+  mid-lecture and should not have to find the live one in a list — with the
+  rest one click behind *Show all questions*. Only while a round is *open*:
+  between bouts the teacher is choosing what to do next, and a single question
+  with no way past it would be a worse tool than the list. It lists the
+  choices too, so they can be read out without switching views, and marks none
+  of them until asked.
+- **The projected join screen has two shapes.** While students are arriving the
+  QR code owns the screen; once the first bout opens (`SessionFeed.started()`)
+  the question takes that space and the code shrinks to a corner. It shrinks
+  rather than disappears because somebody always fails to log in during the
+  scramble and needs a way in mid-lecture. It is deliberately *not* repeated on
+  the Report view: that screen is projected after the fact, the Join view is a
+  click away, and a second code there buys nothing.
 - **The question belongs on the projected screen throughout.** The Join view
   carries `<app-question-panel>`, which shows the question the class is on —
   while students are still scanning, while a bout is open, and while they argue
@@ -161,6 +176,20 @@ quizbinf/
   clean. `e2e/figures.spec.mjs` measures the drawn width against the column
   instead of asserting a rule exists, and fails against the version that had
   the rules in the components.
+- **The questions leave the app as study material.** Students ask for them
+  after the lecture and where they look is Canvas, so the Report view offers
+  the quiz as HTML (what Canvas's editor takes as a paste) or Markdown, with or
+  without the answers marked. `app/export.py` rewrites every `/api/images/…`
+  reference to an absolute URL first: a relative path resolves against Canvas
+  once pasted there, which is to say not at all. The HTML goes through the same
+  renderer and sanitiser students saw, so it cannot carry anything the lecture
+  did not.
+- **Reordering questions is safe at any time**, unlike deleting one: rounds
+  point at question ids, never at positions, so the running order moves and
+  nothing else does. `PUT /api/quizzes/{id}/questions/order` takes the
+  *complete* order and refuses anything that is not exactly this quiz's
+  questions — a partial list from a stale client would otherwise renumber from
+  a view that no longer exists.
 - **Questions are multiple choice with exactly one correct choice.** Keep the
   model and UI to single-select radio buttons; no free text, no multi-select.
   Nothing is marked correct by default when authoring — a pre-selected first
@@ -429,6 +458,39 @@ URL so the QR code resolves. See the README.
   (`no (1/2)`) so the all-or-nothing rule cannot silently hide a student who
   answered most of them. Personal data, so teacher-only and labelled
   do-not-project like the Participants view.
+- **The Canvas gradebook file asks a different question, on purpose.**
+  `GET /api/reports/canvas-participation.csv` scores **one point per lecture in
+  which the student answered at least 75% of the bouts that ran** — four
+  questions asked twice is eight chances, of which six must be taken
+  (`DEFAULT_ANSWER_THRESHOLD`, overridable per download). Three decisions worth
+  keeping:
+  - **Answering, not logging in.** A login proves only that someone has the
+    session code, which travels by text message; answering most of the bouts
+    means being there while each submission window was open, which is as close
+    to attendance as this app gets.
+  - **Not every bout.** Somebody always misses a window by seconds, loses
+    signal, or arrives during the first question. That is what the threshold
+    buys, and lowering the bar to *some* answering would give the login hole
+    back.
+  - **A lecture that ran no rounds is dropped from the denominator**, not
+    scored zero: nothing was asked, so it can neither be attended nor missed.
+
+  It is not the same measure as the plain report above, which asks whether the
+  student answered *both* bouts of every question asked twice — so do not
+  "fix" either to agree with the other. `tests/test_export.py` pins the
+  divergence with a student who scores full marks in one and nothing in the
+  other. The file carries the identifying columns Canvas's own gradebook export
+  uses, one assignment column, and a *Points Possible* row; a column name
+  matching no existing assignment makes Canvas offer to create one, which is
+  how the teacher gets a participation Assignment without setting anything up
+  first. Both `canvas_user_id` and `kthid` go out, since Canvas matches on its
+  own id first and falls back to the SIS ones, and a manually created course
+  may have no SIS ids at all — the roster is the only bridge from the KTH
+  username the app signs students in under. A student with no roster row is
+  still listed, with blank ids: Canvas skips that row, and the blank is what
+  tells the teacher who it happened to instead of leaving them to wonder why
+  someone has no mark. The teacher is excluded, having run the lecture rather
+  than sat it.
 
 ## Local development
 
@@ -488,6 +550,8 @@ alembic upgrade head
 | `GET /api/auth/login` | all | KTH OIDC flow (**not implemented yet**) |
 | `POST /api/quizzes`, `POST /api/quizzes/{id}/questions` | teacher | author content |
 | `PUT /api/quizzes/{id}/questions/{qid}` | teacher | edit a question; send back the id of every choice kept |
+| `PUT /api/quizzes/{id}/questions/order` | teacher | set the running order — the **complete** list of question ids |
+| `GET /api/quizzes/{id}/export.{md,html}?answers=` | teacher | the questions as study material, figures made absolute |
 | `DELETE /api/quizzes/{id}/questions/{qid}` | teacher | delete a question — **409 once it has been asked** |
 | `POST /api/sessions?quiz_id=` | teacher | start a lecture session |
 | `GET /api/sessions/{code}/join-url` | teacher | the URL the QR code encodes |
@@ -498,6 +562,7 @@ alembic upgrade head
 | `GET /api/sessions/{code}/participation` | teacher | **per-student** correctness (personal data) |
 | `GET /api/sessions/{code}/participation.csv` | teacher | the same as CSV |
 | `GET /api/reports/participation[.csv]?from=&to=` | teacher | **end of term:** attendance across every session, yes/no per session, no correctness |
+| `GET /api/reports/canvas-participation.csv?assignment=&threshold=` | teacher | 1 point per lecture where ≥75% of bouts were answered, in Canvas's gradebook-import format |
 | `GET /api/roster/status` | teacher | is Canvas configured, and what has been synced |
 | `GET /api/roster/courses` | teacher | Canvas courses the token's owner teaches |
 | `POST /api/roster/sync?course_id=` | teacher | mirror a course's students into the local roster |
@@ -561,9 +626,8 @@ alembic upgrade head
       Options if this turns out to matter: a per-round code shown only on the
       projected slide and required with the answer, or a short auto-closing
       window. Not built — decide whether it is worth the friction.
-- [ ] **Question reordering and quiz deletion.** Questions can now be created,
-      edited and deleted; reordering them within a quiz, and deleting a whole
-      quiz, are still missing.
+- [ ] **Quiz deletion.** Questions can be created, edited, reordered and
+      deleted; deleting a whole quiz is still missing.
 - [ ] Consider showing students the correct answer **on their own phones**
       after the post round closes. The projected Report view now marks it once
       the second bout is halted, so the room is told in class; the student

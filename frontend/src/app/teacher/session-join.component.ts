@@ -1,7 +1,7 @@
 import { Component, OnDestroy, OnInit, signal } from '@angular/core';
 
-import { API_BASE } from '../api.config';
 import { ApiService } from '../api.service';
+import { JoinQrComponent } from './join-qr.component';
 import { QuestionPanelComponent } from './question-panel.component';
 import { SessionFeed } from './session-feed.service';
 
@@ -12,67 +12,85 @@ const POLL_MS = 3000;
  * The projected screen for everything up to the results: how to get in, how
  * full the room is, and the question the class is on.
  *
- * The question is here because this is the view that stays on the projector —
- * while students are still scanning, while a bout is open, and while they
- * discuss between the two. It shows the choices but never which is correct.
+ * It has two shapes, and which one is showing is decided by the session rather
+ * than by the teacher. While students are still arriving the QR code owns the
+ * screen. Once the first bout opens the question takes that space and the code
+ * shrinks into a corner — small, but still there, because someone always fails
+ * to log in during the scramble and needs a way in mid-lecture.
+ *
+ * It shows the choices, never which of them is correct.
  */
 @Component({
   selector: 'app-teacher-session-join',
   standalone: true,
-  imports: [QuestionPanelComponent],
+  imports: [JoinQrComponent, QuestionPanelComponent],
   template: `
-    <div class="wrap">
-      <img class="qr" [src]="qrSrc" alt="QR code to join this session" />
-
-      <div class="how">
-        <p class="lead">Scan to join</p>
-        <code class="url">{{ feed.joinUrl() }}</code>
-        <p class="alt">
-          …or open <strong>{{ host() }}</strong><br />
-          and enter code <strong class="code">{{ feed.code() }}</strong>
-        </p>
-
-        <p class="joined">
-          <strong>{{ joined() }}</strong>
-          {{ joined() === 1 ? 'student has' : 'students have' }} joined
-        </p>
-        <p class="connected">{{ connected() }} connected right now</p>
+    @if (feed.started()) {
+      <div class="running">
+        <div class="question">
+          <app-question-panel />
+        </div>
+        <aside class="aside">
+          <app-join-qr [small]="true" />
+          <p class="joined-small">{{ joined() }} joined</p>
+        </aside>
       </div>
-    </div>
+    } @else {
+      <div class="wrap">
+        <app-join-qr />
 
-    <div class="question">
-      <app-question-panel />
-    </div>
+        <div class="how">
+          <code class="url">{{ feed.joinUrl() }}</code>
+          <p class="alt">
+            …or open <strong>{{ host() }}</strong><br />
+            and enter code <strong class="code">{{ feed.code() }}</strong>
+          </p>
+
+          <p class="joined">
+            <strong>{{ joined() }}</strong>
+            {{ joined() === 1 ? 'student has' : 'students have' }} joined
+          </p>
+          <p class="connected">{{ connected() }} connected right now</p>
+        </div>
+      </div>
+
+      <div class="question">
+        <app-question-panel />
+      </div>
+    }
   `,
   styles: [
     `
       .wrap { display: flex; gap: 2rem; align-items: center; justify-content: center;
               max-width: 46rem; margin: 2rem auto; padding: 1rem; flex-wrap: wrap; }
-      /* Large: this is read from the back of a lecture hall. */
-      .qr { width: 340px; height: 340px; display: block; }
-      .lead { font-size: 1.4rem; font-weight: 600; margin: 0 0 0.5rem; }
       .url { font-size: 0.95rem; word-break: break-all; }
       .alt { margin-top: 1rem; line-height: 1.8; }
       .code { font-size: 1.6rem; letter-spacing: 0.1em; }
       .joined { font-size: 1.6rem; margin-top: 1.5rem; }
       .connected { font-size: 0.85rem; color: #777; margin-top: -0.8rem; }
-      .question { max-width: 46rem; margin: 0 auto 2rem; padding: 1.2rem 1rem 0;
-                  border-top: 1px solid #eee; }
+      .question { max-width: 46rem; margin: 0 auto 2rem; padding: 1.2rem 1rem 0; }
+
+      /* Once a bout is running the question leads and the code steps aside. */
+      .running { display: flex; gap: 1.5rem; align-items: flex-start;
+                 max-width: 52rem; margin: 1.5rem auto; padding: 1rem; }
+      .running .question { flex: 1; margin: 0; padding: 0; }
+      .aside { flex-shrink: 0; }
+      .joined-small { font-size: 0.85rem; color: #777; text-align: center; margin: 0.3rem 0 0; }
+
+      @media (max-width: 40rem) {
+        .running { flex-direction: column-reverse; }
+      }
     `,
   ],
 })
 export class TeacherSessionJoinComponent implements OnInit, OnDestroy {
   joined = signal(0);
   connected = signal(0);
-  qrSrc = '';
   private timer?: ReturnType<typeof setInterval>;
 
   constructor(public feed: SessionFeed, private api: ApiService) {}
 
   ngOnInit(): void {
-    // Cache-buster: this URL once returned index.html via the SPA fallback,
-    // and a cached copy renders as a broken image.
-    this.qrSrc = `${API_BASE}/api/sessions/${this.feed.code()}/qr.svg?v=${Date.now()}`;
     this.refresh();
     this.timer = setInterval(() => this.refresh(), POLL_MS);
   }

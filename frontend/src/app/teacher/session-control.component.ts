@@ -35,10 +35,27 @@ const POLL_MS = 2000;
         </p>
       }
 
-      @for (q of feed.questions(); track q.id) {
-        <section class="q">
+      <!-- While a round is open this is the one question that matters, so the
+           rest of the quiz gets out of the way: the teacher is driving from
+           this screen mid-lecture and should not have to find the live one in
+           a list. The others stay one click away. -->
+      @for (q of shownQuestions(); track q.id) {
+        <section class="q" [class.live]="feed.openRoundFor(q)">
           <div class="qtext"><span class="num">{{ q.position + 1 }}.</span>
             <span [innerHTML]="q.text_html"></span></div>
+
+          <!-- The alternatives as the students see them, so the teacher can
+               read them out without switching views. Nothing is marked until
+               asked for: this screen is often visible from the room. -->
+          <ol class="choices">
+            @for (c of q.choices; track c.id) {
+              <li [class.correct]="revealed()[q.id] && c.is_correct">{{ c.text }}</li>
+            }
+          </ol>
+          <button type="button" class="reveal" (click)="toggleReveal(q.id)">
+            {{ revealed()[q.id] ? 'Hide the answer' : 'Show which is correct' }}
+          </button>
+
           <div class="controls">
             <button (click)="open(q, 'pre')" [disabled]="feed.anyOpen() || ran(q, 'pre')">
               {{ ran(q, 'pre') ? '✓ 1st bout done' : 'Open 1st bout (pre)' }}
@@ -58,6 +75,12 @@ const POLL_MS = 2000;
         </section>
       }
 
+      @if (canNarrow()) {
+        <button type="button" class="show-all" (click)="showAll.set(!showAll())">
+          {{ showAll() ? 'Show only the live question' : 'Show all ' + feed.questions().length + ' questions' }}
+        </button>
+      }
+
       @if (actionError()) {
         <p class="error">{{ actionError() }}</p>
       }
@@ -71,7 +94,14 @@ const POLL_MS = 2000;
       .status.open { background: #eafaf1; }
       .halt { margin-left: 0.8rem; background: #c0392b; color: #fff; border-color: #a33; }
       .q { border-top: 1px solid #eee; padding: 0.9rem 0; }
+      .q.live { border-left: 4px solid #2c7a51; padding-left: 0.8rem; }
       .qtext { font-weight: 600; margin: 0 0 0.5rem; }
+      .choices { margin: 0.3rem 0 0.5rem; padding-left: 1.4rem; color: #333; }
+      .choices li { margin: 0.1rem 0; }
+      .choices li.correct { font-weight: 700; color: #2c7; }
+      .reveal { font-size: 0.75rem; padding: 0.15rem 0.45rem; margin-bottom: 0.5rem;
+                color: #777; background: none; }
+      .show-all { font-size: 0.85rem; margin-top: 0.8rem; }
       .qtext :is(p, ul, ol) { display: inline; margin: 0; }
       .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
       .reset { margin-left: auto; color: #8a2b20; border-color: #e6b8b2; }
@@ -84,6 +114,10 @@ const POLL_MS = 2000;
 export class TeacherSessionControlComponent implements OnInit, OnDestroy {
   answered = signal(0);
   actionError = signal('');
+  /** Override the narrowing, for picking what to ask next mid-session. */
+  showAll = signal(false);
+  /** Which questions have had their answer revealed, by explicit click. */
+  revealed = signal<Record<number, boolean>>({});
   private timer?: ReturnType<typeof setInterval>;
 
   constructor(public feed: SessionFeed, private api: ApiService) {}
@@ -97,6 +131,33 @@ export class TeacherSessionControlComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     if (this.timer) clearInterval(this.timer);
+  }
+
+  /**
+   * The questions to show: just the live one while a round is open.
+   *
+   * Only while a round is *open* — between bouts the teacher is choosing what
+   * to do next, and a single question with no way past it would be a worse
+   * tool than the list.
+   */
+  shownQuestions(): Question[] {
+    const open = this.feed.openRound();
+    if (!open || this.showAll()) return this.feed.questions();
+    return this.feed.questions().filter((q) => q.id === open.question_id);
+  }
+
+  /**
+   * Whether the narrowing applies at all, and so whether to offer the toggle.
+   *
+   * Not "how many are hidden": with the list expanded nothing is hidden, and
+   * the way back to the live question would disappear with the button.
+   */
+  canNarrow(): boolean {
+    return !!this.feed.openRound() && this.feed.questions().length > 1;
+  }
+
+  toggleReveal(questionId: number): void {
+    this.revealed.update((r) => ({ ...r, [questionId]: !r[questionId] }));
   }
 
   /** Whether anything has been run for this question, so a reset makes sense. */

@@ -24,6 +24,24 @@ import { SessionFeed } from './session-feed.service';
   imports: [NameDrawComponent],
   template: `
     <div class="wrap">
+      <div class="top">
+        <!-- Study material: students ask for the questions afterwards, and
+             where they look is Canvas. Figures are rewritten to absolute URLs
+             by the export so they still load once pasted there. -->
+        @if (feed.state(); as s) {
+          <p class="handout">
+            Hand out:
+            <a [href]="exportUrl(s.quiz_id, 'html')">HTML</a> ·
+            <a [href]="exportUrl(s.quiz_id, 'md')">Markdown</a>
+            <label class="with-answers">
+              <input type="checkbox" [checked]="withAnswers()"
+                     (change)="withAnswers.set(!withAnswers())" />
+              with answers
+            </label>
+          </p>
+        }
+      </div>
+
       @if (!feed.questions().length) {
         <p class="empty">Nothing to report yet.</p>
       }
@@ -98,6 +116,11 @@ import { SessionFeed } from './session-feed.service';
   styles: [
     `
       .wrap { max-width: 46rem; margin: 1.5rem auto; padding: 1rem; }
+      .top { display: flex; justify-content: space-between; align-items: flex-start;
+             gap: 1rem; }
+      .handout { font-size: 0.9rem; color: #555; margin: 0; }
+      .handout a { margin: 0 0.15rem; }
+      .with-answers { display: block; margin-top: 0.3rem; font-size: 0.85rem; }
       .q { border-top: 1px solid #eee; padding: 1rem 0; }
       .qtext { font-weight: 600; font-size: 1.1rem; }
       .qtext :is(p, ul, ol) { display: inline; margin: 0; }
@@ -131,8 +154,14 @@ export class TeacherSessionReportComponent {
   drawn = signal<Record<number, Draw>>({});
   drawing = signal<number | null>(null);
   drawError = signal('');
+  /** Study material normally wants the answers; before a class it may not. */
+  withAnswers = signal(true);
 
   constructor(public feed: SessionFeed, private api: ApiService) {}
+
+  exportUrl(quizId: number, format: 'md' | 'html'): string {
+    return this.api.quizExportUrl(quizId, format, this.withAnswers());
+  }
 
   /** Something to show only once at least one phase is closed. */
   shown(q: Question): boolean {
