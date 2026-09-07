@@ -145,6 +145,24 @@ quizbinf/
 - **SSE broadcaster** (`app/events.py`) is in-memory and therefore assumes a
   **single replica**. Scaling out requires Postgres LISTEN/NOTIFY or Redis
   pub/sub instead.
+- **A streaming endpoint must release its database session before it starts
+  streaming.** FastAPI holds a `yield` dependency open until the response
+  *completes*, and an SSE response completes only when the client disconnects
+  — so `Depends(get_db)` in `events()` kept a Session alive for the whole
+  stream, and a Session with an open transaction keeps a pooled connection
+  checked out. The pool holds `pool_size` + `max_overflow` = 15. This froze a
+  live lecture: the student path escaped by accident, because
+  `record_participant` commits and a commit returns the connection, but the
+  owner path skips that call, so every reconnect of the *projected* browser
+  leaked one connection permanently. On the fifteenth, every request touching
+  the database blocked on checkout for `pool_timeout` while `/health` and
+  `/metrics` kept answering — and because uvicorn logs a request only when its
+  response starts, the log simply stopped rather than showing errors. `events()`
+  therefore calls `db.close()` before returning the response, and nothing below
+  that line may touch the database. `tests/test_sse_holds_no_connection.py`
+  pins it by calling the endpoint directly and asserting the pool is untouched;
+  driving a never-ending response through the test client to observe this only
+  adds ways for the test to hang.
 - **Question text is Markdown**, rendered *and sanitised on the server*
   (`app/markdown.py`, markdown-it-py + nh3) and exposed as `text_html`
   alongside the source. Clients bind it with `[innerHTML]`, so Angular
