@@ -489,6 +489,24 @@ async def events(
     if user.id != session.quiz.owner_id:
         service.record_participant(db, session, user)
 
+    # Release the database before streaming. FastAPI holds a `yield`
+    # dependency open until the response *completes*, and an SSE response
+    # completes when the client goes away — so `get_db`'s session lives as
+    # long as the stream. A Session with an open transaction keeps a pooled
+    # connection checked out for all that time, and the pool holds
+    # `pool_size` + `max_overflow` = 15. The student path happened to escape
+    # it, because `record_participant` commits and a commit returns the
+    # connection; the teacher path skipped that commit, so every reconnect of
+    # the projected browser leaked one connection permanently. Fifteen
+    # reconnects into a lecture, every request that touches the database
+    # blocked on checkout and the app froze mid-question — while /health and
+    # /metrics, which need no database, kept answering.
+    #
+    # Nothing below this line needs the database, so close it explicitly
+    # rather than relying on a commit happening to occur on some paths.
+    # `Session.close()` is idempotent; FastAPI's own cleanup runs later.
+    db.close()
+
     async def stream():
         queue = broadcaster.subscribe(session_code)
         try:
