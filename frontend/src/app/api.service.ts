@@ -152,6 +152,16 @@ export class ApiService {
     );
   }
 
+  /**
+   * The whole volume as one archive: database, figures, redacted config.
+   *
+   * Personal data — the database holds every student's name and answers — so
+   * it is teacher-only, and the file itself should be treated accordingly.
+   */
+  backupUrl(): string {
+    return `${API_BASE}/api/backup.zip`;
+  }
+
   /** The questions as study material to post in Canvas. */
   quizExportUrl(quizId: number, format: 'md' | 'html', answers = true): string {
     const query = answers ? '' : '?answers=false';

@@ -257,3 +257,31 @@ test('one lecture can be marked in Canvas from the Participants page', async ({
   await bothCtx.close();
   await halfCtx.close();
 });
+
+
+test('the whole volume can be downloaded as a backup', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await loginAs(page, 'teacher');
+  await page.waitForURL('**/teacher');
+
+  // Something worth not losing.
+  const quiz = await newQuiz(page, 'Backup quiz');
+  await addQuestion(quiz, 'Which aligns locally', ['Smith-Waterman', 'Needleman-Wunsch']);
+
+  await page.getByText('Backup', { exact: true }).click();
+  const link = page.getByRole('link', { name: 'Download backup' });
+  await expect(link).toBeVisible();
+
+  const response = await page.request.get(await link.getAttribute('href'));
+  expect(response.status()).toBe(200);
+  expect(response.headers()['content-type']).toContain('zip');
+
+  // A real archive, not an error page with a zip content type: check the
+  // local-file-header magic and that the pieces are named inside it.
+  const body = await response.body();
+  expect(body.subarray(0, 2).toString('latin1')).toBe('PK');
+  const asText = body.toString('latin1');
+  expect(asText).toContain('quizbinf.db');
+  expect(asText).toContain('README.txt');
+});

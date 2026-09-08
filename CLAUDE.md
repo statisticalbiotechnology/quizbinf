@@ -453,9 +453,31 @@ URL so the QR code resolves. See the README.
   None, and the participation report for *every* session using that question
   raised instead of rendering. Deleting a question that has been asked is now
   refused (409), and the report skips a stranded round rather than failing.
-  See `tests/test_answers_survive.py`. Since the database is a single SQLite
-  file with no backup, exporting `participation.csv` after a lecture is the
-  only real safeguard.
+  See `tests/test_answers_survive.py`. The database is a single SQLite file
+  with no replication and no snapshots, so **`GET /api/backup.zip`** exists:
+  the whole database (via `VACUUM INTO`, which is consistent under a live
+  lecture where a file copy could be torn), the uploaded figures (questions
+  reference them by path, so a database restored without them shows broken
+  images), and the configuration. Teacher-only, and the archive holds every
+  student's name and answers, so it is as sensitive as the Participants view.
+
+  **Secrets are redacted from the configuration**, by key *pattern* rather
+  than by a list so a setting added later is covered by default — and a
+  password inside a `DATABASE_URL` with it. The Canvas token acts as the
+  teacher in Canvas, where the grades are, and the app's own rule is that it
+  never reaches a client; an archive that sits in a downloads folder must not
+  be the exception. The keys stay, since they are what tells you what to set
+  on a new host, and the values are all obtainable again. If a
+  restore-everything-including-credentials bundle is ever wanted, it needs to
+  be a deliberate, separately-argued opt-in.
+
+  The snapshot is written under a random filename rather than `quizbinf.db`:
+  `VACUUM INTO` refuses to overwrite, so naming it after its source breaks the
+  moment the workspace and the data directory coincide.
+
+  It is still a manual copy taken at one moment — nothing is scheduled or
+  off-site — so exporting `participation.csv` after a lecture remains worth
+  doing.
 - **Editing a question follows the same principle.** Text, choice wording,
   choice order and which choice is correct can all be changed at any time,
   including after the question has been asked — fixing the wrong answer being
@@ -605,6 +627,7 @@ alembic upgrade head
 | `GET /api/sessions/{code}/questions/{id}/comparison` | teacher | pre vs post counts |
 | `GET /api/sessions/{code}/questions/{id}/discussants?count=` | teacher | draw students at random from those who answered — **names only** |
 | `DELETE /api/sessions/{code}/questions/{id}/rounds` | teacher | reset a question — **discards its answers** so it can be run again |
+| `GET /api/backup.zip` | teacher | the whole volume: database, figures, config with secrets redacted |
 | `POST /api/images` | teacher | upload a figure; returns Markdown to paste |
 | `POST /api/markdown/preview` | teacher | render Markdown for the authoring preview |
 | `GET /api/sessions/{code}/state` | student | full state snapshot (resync) |
