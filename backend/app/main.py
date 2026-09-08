@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import re
@@ -7,11 +8,11 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, JSONResponse
 
 from .auth import RENEW_FLAG, set_session_cookie
 from .config import VOLUME_ENV_FILE, get_settings
-from .db import Base, engine
+from .db import Base, engine, journal_mode, pool_stats
 from .routers import auth, backup, images, markdown, quizzes, reports, roster, sessions
 
 log = logging.getLogger("quizbinf")
@@ -90,6 +91,7 @@ def log_startup_summary() -> None:
 async def lifespan(app: FastAPI):
     # Alembic owns the schema in production; create_all covers dev/tests.
     Base.metadata.create_all(bind=engine)
+    journal_mode()  # warm the cache while the database is idle, not mid-freeze
     log_startup_summary()
     yield
 
@@ -106,6 +108,69 @@ if settings.environment != "production":
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+#: How many requests may be in the app at once. Everything below the pool it
+#: draws connections from (`db.SQLITE_POOL_SIZE`), so running out of
+#: connections is not something that can happen: the queue forms here instead,
+#: where waiting is all it does. Roughly the size of the thread pool that runs
+#: synchronous endpoints, since that is how much work can actually proceed.
+REQUEST_SLOTS = 40
+
+#: How long a request waits for a slot before being turned away. Long enough to
+#: ride out the few seconds when a whole class submits at once; short enough
+#: that the answer is "busy, try again" while the student is still holding the
+#: phone, rather than a spinner that outlives the submission window.
+QUEUE_SECONDS = 20
+
+_slots = asyncio.Semaphore(REQUEST_SLOTS)
+
+
+def _holds_no_connection(path: str) -> bool:
+    """Requests that must not take a slot.
+
+    The SSE stream is open for the whole lecture and deliberately holds no
+    database connection while it runs, so counting it would use up every slot
+    within one class and wedge the app completely. `/api/health` is exempt for
+    the opposite reason: it is the endpoint that has to answer *while*
+    everything else is queueing, which is when someone is trying to find out
+    what is wrong.
+    """
+    return path.endswith("/events") or path == "/api/health"
+
+
+@app.middleware("http")
+async def limit_concurrency(request: Request, call_next):
+    """Cap how much of the app is in flight at once.
+
+    A lecture hall is not a steady load: nothing happens for four minutes and
+    then 150 phones submit inside the same second. Without a cap, every one of
+    those requests is accepted, each takes a database connection, and they
+    starve each other — the pool empties, and requests that would have
+    succeeded a moment later fail with a 500 instead. The work does not get
+    done faster for having been let in; it only fails.
+
+    With a cap the same burst is served at the same rate and simply queues,
+    which is the behaviour a small machine should have. Only a queue that is
+    still not moving after `QUEUE_SECONDS` is refused, and it is refused
+    honestly — 503 with `Retry-After`, which says "ask again", where a 500 says
+    "something is broken" and invites nobody to retry.
+    """
+    if _holds_no_connection(request.url.path):
+        return await call_next(request)
+    try:
+        await asyncio.wait_for(_slots.acquire(), timeout=QUEUE_SECONDS)
+    except (asyncio.TimeoutError, TimeoutError):
+        log.warning("shed a request for %s: %d already in flight", request.url.path, REQUEST_SLOTS)
+        return JSONResponse(
+            {"detail": "The server is busy. Please try again."},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={"Retry-After": "1"},
+        )
+    try:
+        return await call_next(request)
+    finally:
+        _slots.release()
+
 
 @app.middleware("http")
 async def renew_session_cookie(request: Request, call_next):
@@ -161,6 +226,12 @@ def health() -> dict:
         "storage": "persistent" if settings._writable_data_dir() else "ephemeral",
         "instance": INSTANCE_ID,
         "secret": fingerprint[:8],
+        # The freeze this app has already suffered once is invisible from
+        # outside: requests stop being answered while this endpoint keeps
+        # saying ok, because it needs no database. `checked_out` climbing to
+        # `size` and staying there is that failure, visible from a phone.
+        "db_pool": pool_stats(),
+        "journal_mode": journal_mode(),
     }
 
 

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 
 from .. import service
 from ..auth import current_teacher, current_user
@@ -452,12 +453,23 @@ def session_state(
 
 
 @router.post("/{code}/answers")
-async def submit_answer(
+def submit_answer(
     code: str,
     body: AnswerIn,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> dict:
+    """Record one student's answer.
+
+    Deliberately a plain `def`. SQLAlchemy here is synchronous, so an
+    `async def` runs those queries *on the event loop* — and this is the one
+    endpoint a whole class calls at the same moment. Every answer then blocks
+    every other request the process is serving, including the SSE keep-alives
+    and the teacher's own screen, for as long as SQLite takes to commit. As a
+    `def` FastAPI runs it in the thread pool, where the waiting is bounded and
+    concurrent. It broadcasts nothing, so there is nothing here that needs to
+    be awaited.
+    """
     session = _session_by_code(db, code)
     round_ = service.get_open_round(db, session)
     if round_ is None:
@@ -472,6 +484,25 @@ async def submit_answer(
     return {"ok": True, "choice_id": choice.id}
 
 
+def _join_session(code: str, user_id: int) -> str:
+    """Find the session, note that the user is following it, return its code.
+
+    Opens and closes its own Session so it borrows a pooled connection only
+    while it is actually running — see `events()` for why that matters.
+    """
+    db = SessionLocal()
+    try:
+        session = db.scalar(select(QuizSession).where(QuizSession.code == code))
+        if session is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+        user = db.get(User, user_id)
+        if user is not None and user.id != session.quiz.owner_id:
+            service.record_participant(db, session, user)
+        return session.code
+    finally:
+        db.close()
+
+
 @router.get("/{code}/events")
 async def events(
     code: str,
@@ -484,28 +515,38 @@ async def events(
     Clients should treat every event as a full state snapshot and additionally
     call /state after (re)connecting — events sent while disconnected are lost.
     """
-    session = _session_by_code(db, code)
-    session_code = session.code
-    if user.id != session.quiz.owner_id:
-        service.record_participant(db, session, user)
-
-    # Release the database before streaming. FastAPI holds a `yield`
-    # dependency open until the response *completes*, and an SSE response
-    # completes when the client goes away — so `get_db`'s session lives as
-    # long as the stream. A Session with an open transaction keeps a pooled
-    # connection checked out for all that time, and the pool holds
-    # `pool_size` + `max_overflow` = 15. The student path happened to escape
-    # it, because `record_participant` commits and a commit returns the
-    # connection; the teacher path skipped that commit, so every reconnect of
-    # the projected browser leaked one connection permanently. Fifteen
-    # reconnects into a lecture, every request that touches the database
-    # blocked on checkout and the app froze mid-question — while /health and
-    # /metrics, which need no database, kept answering.
+    # Release the request's database session before this function awaits
+    # anything at all — not merely before it starts streaming.
     #
-    # Nothing below this line needs the database, so close it explicitly
-    # rather than relying on a commit happening to occur on some paths.
-    # `Session.close()` is idempotent; FastAPI's own cleanup runs later.
+    # Two reasons, both learned the hard way. FastAPI holds a `yield`
+    # dependency open until the response *completes*, and an SSE response
+    # completes only when the client goes away, so `get_db`'s session would
+    # otherwise live as long as the stream; a Session with an open transaction
+    # keeps a pooled connection checked out for all of it. The student path
+    # escaped that by accident, because `record_participant` commits and a
+    # commit returns the connection, while the teacher path skipped the
+    # commit — so every reconnect of the projected browser leaked one
+    # connection permanently and the app froze mid-question, with /health,
+    # which needs no database, still answering.
+    #
+    # The second reason is why the close moved *above* the join. By the time
+    # this body runs, `current_user` has already run a SELECT on this session,
+    # so it holds a connection. Await anything while that is true and the
+    # connection is pinned for the duration of the wait — and a class scanning
+    # the QR code opens hundreds of these streams at once, all waiting
+    # together. Connections were held by requests that were doing nothing,
+    # outnumbering the threads actually working, and the pool ran dry again
+    # from the opposite direction. Nothing below needs the request's session:
+    # `_join_session` takes its own for the moment it runs.
+    user_id = user.id
     db.close()
+
+    # Off the event loop: this handler must be `async def` because it returns
+    # a streaming response, but the work below is synchronous SQLAlchemy and
+    # one of its steps is a *write*. Run on the loop, a class arriving
+    # together would take it in turns to stall every other request in the
+    # process — and arriving together is what a class does.
+    session_code = await run_in_threadpool(_join_session, code, user_id)
 
     async def stream():
         queue = broadcaster.subscribe(session_code)
