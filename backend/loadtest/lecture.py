@@ -1,0 +1,379 @@
+"""Drive a whole lecture at a running instance and measure what it costs.
+
+Why this exists: the app was slow in front of a real class of ~150, and it was
+slow *at a particular moment* — the teacher refreshed the projected view while
+students were answering. Unit tests answer one request at a time, and the
+Playwright suite runs three browsers, so neither can see a queue form. This
+does: it logs in a whole class, holds one SSE stream open per student the way
+a phone does, opens a bout, and makes everyone answer at once — then refreshes
+the teacher view in the middle of that burst, which is the collision the class
+actually hit.
+
+What it reports is *latency percentiles per endpoint* and every error, not a
+single throughput number. Absolute figures from a laptop or a CI container are
+pessimistic (server and 150 clients share one machine, and the clients are
+Python rather than 150 separate phones); the useful signals are relative — one
+endpoint far slower than the rest, a p99 an order of magnitude past its p50, a
+`database is locked`, or a 500.
+
+    python -m loadtest.lecture --base-url http://localhost:8000
+
+Run it against a *throwaway* instance: it creates a quiz, a session and 150
+users, and it answers questions as them. Mock login must be enabled, so it
+cannot be pointed at production even by accident.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import statistics
+import sys
+import time
+from collections import defaultdict
+from dataclasses import dataclass, field
+
+import httpx
+
+# A phone that has scrolled away is still connected; the class does not close
+# its tabs. Every student therefore holds a stream for the whole run.
+STREAM_LIMIT = 400
+
+
+@dataclass
+class Sample:
+    label: str
+    seconds: float
+    status: int
+    note: str = ""
+
+    @property
+    def failed(self) -> bool:
+        return self.status >= 400 or self.status == 0
+
+
+@dataclass
+class Recorder:
+    samples: list[Sample] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+    def add(self, sample: Sample) -> None:
+        self.samples.append(sample)
+        if sample.failed:
+            self.errors.append(f"{sample.label}: HTTP {sample.status} {sample.note}".strip())
+
+    async def timed(self, label: str, coro_factory) -> httpx.Response | None:
+        started = time.perf_counter()
+        try:
+            response = await coro_factory()
+        except Exception as e:  # noqa: BLE001 — a client-side failure is a result
+            self.add(Sample(label, time.perf_counter() - started, 0, repr(e)))
+            return None
+        note = "" if response.status_code < 400 else response.text[:120]
+        self.add(Sample(label, time.perf_counter() - started, response.status_code, note))
+        return response
+
+    def by_label(self) -> dict[str, list[Sample]]:
+        grouped: dict[str, list[Sample]] = defaultdict(list)
+        for sample in self.samples:
+            grouped[sample.label].append(sample)
+        return grouped
+
+
+def percentile(values: list[float], fraction: float) -> float:
+    """Nearest-rank, so a p99 over 150 samples names an actual request."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, round(fraction * len(ordered) + 0.5) - 1))
+    return ordered[index]
+
+
+def report(recorder: Recorder) -> None:
+    grouped = recorder.by_label()
+    width = max((len(label) for label in grouped), default=10)
+    print()
+    print(f"{'endpoint':<{width}}  {'n':>5} {'p50':>8} {'p95':>8} {'p99':>8} {'max':>8}  fail")
+    print("-" * (width + 50))
+    for label in sorted(grouped):
+        samples = grouped[label]
+        times = [s.seconds for s in samples]
+        failures = sum(1 for s in samples if s.failed)
+        print(
+            f"{label:<{width}}  {len(samples):>5} "
+            f"{percentile(times, 0.50):>8.3f} {percentile(times, 0.95):>8.3f} "
+            f"{percentile(times, 0.99):>8.3f} {max(times):>8.3f}  {failures or '':>4}"
+        )
+    if recorder.errors:
+        print(f"\n{len(recorder.errors)} failed request(s):")
+        seen: dict[str, int] = defaultdict(int)
+        for error in recorder.errors:
+            seen[error] += 1
+        for error, count in sorted(seen.items(), key=lambda kv: -kv[1])[:15]:
+            print(f"  {count:>4}x {error}")
+    else:
+        print("\nno failed requests")
+
+
+# --- the lecture -----------------------------------------------------------
+
+
+async def watch_health(client: httpx.AsyncClient, stop: asyncio.Event, seen: list[dict]) -> None:
+    """Poll `/api/health` throughout, and remember the worst pool reading.
+
+    `/api/health` touches no database on purpose, so it is the one endpoint
+    that keeps answering while every other one is stuck waiting for a
+    connection — which is precisely the failure being hunted. If the pool is
+    the bottleneck, `checked_out` pinned at `size` says so outright, where the
+    latency table only says "slow".
+    """
+    while not stop.is_set():
+        try:
+            payload = (await client.get("/api/health", timeout=5)).json()
+            seen.append(payload.get("db_pool", {}))
+        except Exception:  # noqa: BLE001 — health being unreachable is itself data
+            seen.append({"checked_out": None})
+        await asyncio.sleep(0.25)
+
+
+async def login(client: httpx.AsyncClient, username: str) -> httpx.Response:
+    return await client.post("/api/auth/mock-login", json={"username": username})
+
+
+async def make_quiz(client: httpx.AsyncClient, questions: int) -> tuple[int, list[dict]]:
+    quiz = (await client.post("/api/quizzes", json={"title": "Load test"})).json()
+    made = []
+    for i in range(questions):
+        made.append(
+            (
+                await client.post(
+                    f"/api/quizzes/{quiz['id']}/questions",
+                    json={
+                        "text": f"Load-test question {i + 1}",
+                        "choices": [
+                            {"text": "Smith-Waterman", "is_correct": True},
+                            {"text": "Needleman-Wunsch", "is_correct": False},
+                            {"text": "BLAST", "is_correct": False},
+                            {"text": "HMMER", "is_correct": False},
+                        ],
+                    },
+                )
+            ).json()
+        )
+    return quiz["id"], made
+
+
+async def hold_stream(
+    client: httpx.AsyncClient, code: str, recorder: Recorder, stop: asyncio.Event
+) -> None:
+    """One student's SSE stream, open for the whole lecture like a phone's.
+
+    Time to *first byte* is what is measured: it is when the server got round
+    to this student, and it is the number that grows when the event loop is
+    blocked.
+    """
+    started = time.perf_counter()
+    try:
+        async with client.stream("GET", f"/api/sessions/{code}/events", timeout=60) as r:
+            first = time.perf_counter() - started
+            recorder.add(Sample("sse connect", first, r.status_code))
+            if r.status_code >= 400:
+                return
+            async for _ in r.aiter_lines():
+                if stop.is_set():
+                    return
+    except Exception as e:  # noqa: BLE001
+        recorder.add(Sample("sse connect", time.perf_counter() - started, 0, repr(e)))
+
+
+async def teacher_view_refresh(
+    client: httpx.AsyncClient, code: str, quiz_id: int, questions: list[dict], recorder: Recorder
+) -> None:
+    """What pressing F5 on the projected teacher view actually sends.
+
+    The Report view loads the session, the quiz and then one comparison per
+    question, and re-opens its own SSE stream — so a refresh is not one request
+    but N+3 of them arriving together. That is the "unusual clash" this whole
+    harness exists to reproduce.
+    """
+    started = time.perf_counter()
+    await asyncio.gather(
+        recorder.timed("teacher join-url", lambda: client.get(f"/api/sessions/{code}/join-url")),
+        recorder.timed("teacher state", lambda: client.get(f"/api/sessions/{code}/state")),
+        recorder.timed("teacher quiz", lambda: client.get(f"/api/quizzes/{quiz_id}")),
+        *[
+            recorder.timed(
+                "teacher comparison",
+                lambda q=q: client.get(
+                    f"/api/sessions/{code}/questions/{q['id']}/comparison"
+                ),
+            )
+            for q in questions
+        ],
+    )
+    recorder.add(Sample("TEACHER REFRESH (whole)", time.perf_counter() - started, 200))
+
+
+async def run(args: argparse.Namespace) -> int:
+    recorder = Recorder()
+    limits = httpx.Limits(max_connections=STREAM_LIMIT, max_keepalive_connections=STREAM_LIMIT)
+
+    def new_client() -> httpx.AsyncClient:
+        return httpx.AsyncClient(base_url=args.base_url, limits=limits, timeout=args.timeout)
+
+    teacher = new_client()
+    response = await login(teacher, args.teacher)
+    if response.status_code != 200:
+        print(
+            f"could not log in as {args.teacher}: HTTP {response.status_code} "
+            f"{response.text[:200]}\n"
+            "The instance needs MOCK_LOGIN=true and this username in "
+            "TEACHER_USERNAMES.",
+            file=sys.stderr,
+        )
+        return 2
+
+    quiz_id, questions = await make_quiz(teacher, args.questions)
+    code = (await teacher.post(f"/api/sessions?quiz_id={quiz_id}")).json()["code"]
+    print(f"session {code}: {args.questions} questions, {args.students} students")
+
+    pool_readings: list[dict] = []
+    watching = asyncio.Event()
+    watcher = asyncio.create_task(watch_health(new_client(), watching, pool_readings))
+
+    # --- students arrive ---------------------------------------------------
+    students = [new_client() for _ in range(args.students)]
+    stop = asyncio.Event()
+    streams: list[asyncio.Task] = []
+
+    async def arrive(index: int, client: httpx.AsyncClient) -> None:
+        # The class does not arrive in lockstep; spread them over the recruiting
+        # window so this measures a lecture rather than a thundering herd that
+        # never happens.
+        await asyncio.sleep(args.arrival_seconds * index / max(1, args.students))
+        await recorder.timed("student login", lambda: login(client, f"loadstudent{index:03d}"))
+        await recorder.timed(
+            "student state", lambda: client.get(f"/api/sessions/{code}/state")
+        )
+        streams.append(asyncio.create_task(hold_stream(client, code, recorder, stop)))
+
+    await asyncio.gather(*(arrive(i, c) for i, c in enumerate(students)))
+    await asyncio.sleep(0.5)
+    joined = (await teacher.get(f"/api/sessions/{code}/participants")).json()
+    print(f"joined {joined['joined']}, streams open {joined['connected']}")
+
+    # --- the bouts ---------------------------------------------------------
+    for question in questions:
+        for phase in ("pre", "post"):
+            round_ = await recorder.timed(
+                "teacher open round",
+                lambda: teacher.post(
+                    f"/api/sessions/{code}/rounds",
+                    json={"question_id": question["id"], "phase": phase},
+                ),
+            )
+            if round_ is None or round_.status_code >= 400:
+                continue
+            round_id = round_.json()["id"]
+
+            async def answer(index: int, client: httpx.AsyncClient) -> None:
+                # A burst, but not a single instant: phones are thumbed over a
+                # few seconds. Anything shorter than the real window would
+                # invent contention the lecture does not have.
+                await asyncio.sleep(args.burst_seconds * index / max(1, args.students))
+                choice = question["choices"][index % len(question["choices"])]
+                await recorder.timed(
+                    "student answer",
+                    lambda: client.post(
+                        f"/api/sessions/{code}/answers", json={"choice_id": choice["id"]}
+                    ),
+                )
+
+            async def teacher_during_burst() -> None:
+                """The teacher does not sit still while answers arrive.
+
+                They watch the count come in — and, in the lecture that
+                prompted this, refreshed the view mid-burst.
+                """
+                for tick in range(args.burst_ticks):
+                    await recorder.timed(
+                        "teacher live", lambda: teacher.get(f"/api/sessions/{code}/live")
+                    )
+                    if args.refresh_mid_burst and tick == args.burst_ticks // 2:
+                        await teacher_view_refresh(teacher, code, quiz_id, questions, recorder)
+                    await asyncio.sleep(args.burst_seconds / max(1, args.burst_ticks))
+
+            await asyncio.gather(
+                *(answer(i, c) for i, c in enumerate(students)), teacher_during_burst()
+            )
+            await recorder.timed(
+                "teacher close round",
+                lambda: teacher.post(f"/api/sessions/{code}/rounds/{round_id}/close"),
+            )
+            # Between bouts the teacher is on the Report view, which reloads
+            # every comparison on each SSE event.
+            await teacher_view_refresh(teacher, code, quiz_id, questions, recorder)
+
+    # --- the reports afterwards -------------------------------------------
+    await recorder.timed(
+        "teacher participation", lambda: teacher.get(f"/api/sessions/{code}/participation")
+    )
+    await recorder.timed(
+        "teacher canvas csv",
+        lambda: teacher.get(f"/api/sessions/{code}/canvas-participation.csv"),
+    )
+
+    stop.set()
+    watching.set()
+    watcher.cancel()
+    await asyncio.gather(watcher, return_exceptions=True)
+    for task in streams:
+        task.cancel()
+    await asyncio.gather(*streams, return_exceptions=True)
+    await asyncio.gather(*(c.aclose() for c in students), return_exceptions=True)
+
+    health = await teacher.get("/api/health")
+    await teacher.aclose()
+
+    report(recorder)
+    checked_out = [r.get("checked_out") for r in pool_readings]
+    unreachable = sum(1 for c in checked_out if c is None)
+    live = [c for c in checked_out if c is not None]
+    print(
+        f"\ndb pool: peak {max(live, default=0)} of "
+        f"{health.json().get('db_pool', {}).get('size', '?')} checked out over "
+        f"{len(pool_readings)} samples; health unanswered {unreachable}x"
+    )
+    print(f"health after the run: {json.dumps(health.json())[:250]}")
+
+    failures = sum(1 for s in recorder.samples if s.failed)
+    return 1 if failures else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", default="http://localhost:8000")
+    parser.add_argument("--students", type=int, default=150)
+    parser.add_argument("--questions", type=int, default=4)
+    parser.add_argument("--teacher", default="teacher")
+    parser.add_argument(
+        "--arrival-seconds", type=float, default=20.0, help="how long the class takes to arrive"
+    )
+    parser.add_argument(
+        "--burst-seconds", type=float, default=5.0, help="how long answering a bout takes"
+    )
+    parser.add_argument("--burst-ticks", type=int, default=6, help="teacher /live polls per bout")
+    parser.add_argument(
+        "--no-refresh-mid-burst",
+        dest="refresh_mid_burst",
+        action="store_false",
+        help="leave out the teacher refresh that made this app slow in class",
+    )
+    parser.add_argument("--timeout", type=float, default=30.0)
+    args = parser.parse_args()
+    return asyncio.run(run(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

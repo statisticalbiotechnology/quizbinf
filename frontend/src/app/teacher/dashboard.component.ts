@@ -79,6 +79,31 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
         </p>
       </details>
 
+      <details class="term-report">
+        <summary>Backup</summary>
+        <p class="note">
+          Everything on the server that cannot be recreated: the whole
+          database, the uploaded figures, and the configuration. The database
+          is a single file with no replication and no snapshots, so this
+          download is the only copy that exists anywhere else.
+        </p>
+        <p class="note">
+          <strong>Contains personal data</strong> — every student's name and
+          every answer. Keep it somewhere only you can read.
+          <strong>Secrets are removed</strong>: the Canvas token, the OIDC
+          client secret and the teacher password come out as placeholders, so
+          the file is not a credential if it goes astray. The keys stay, so it
+          still tells you what to set up on a new host.
+        </p>
+        <div class="range">
+          <a class="download" [href]="backupUrl()" download>Download backup</a>
+        </div>
+        <p class="note">
+          It is a copy taken now: anything answered afterwards is not in it.
+          Worth taking after each lecture, alongside the participation CSV.
+        </p>
+      </details>
+
       <details class="term-report roster" (toggle)="onRosterOpened($event)">
         <summary>Course roster (Canvas)</summary>
         @if (rosterStatus(); as status) {
@@ -400,6 +425,10 @@ export class TeacherDashboardComponent implements OnInit {
 
   semesterCsvUrl(): string {
     return this.api.semesterParticipationCsvUrl(this.reportFrom, this.reportTo);
+  }
+
+  backupUrl(): string {
+    return this.api.backupUrl();
   }
 
   canvasCsvUrl(): string {

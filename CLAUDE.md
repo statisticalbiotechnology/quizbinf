@@ -163,6 +163,47 @@ quizbinf/
   pins it by calling the endpoint directly and asserting the pool is untouched;
   driving a never-ending response through the test client to observe this only
   adds ways for the test to hang.
+- **No request may hold a database connection while it waits.** The rule above
+  is the streaming case of a general one, and the general one bit later:
+  loading 150 students at once emptied a pool of *fifty* while only forty
+  threads could work, because the connections were held by requests doing
+  nothing. A sync SQLAlchemy Session opens a transaction on its first query
+  and keeps a pooled connection until something ends it, and FastAPI runs
+  dependencies and endpoints as two separate hops through the thread pool — so
+  `current_user`'s SELECT pinned a connection across the wait for a second
+  thread, on every request in flight. `current_user` therefore ends its
+  transaction with `db.commit()` before returning (a commit, not a rollback:
+  the sessionmaker sets `expire_on_commit=False`, so the endpoint can still
+  read the user's attributes without another query), and `events()` closes its
+  session before it awaits *anything*, not merely before it streams.
+- **The lecture-hall settings live in `app/db.py`,** and the defaults they
+  replace are what made the app slow in front of a class. SQLite runs in
+  **WAL** mode — without it a single writer blocks every reader, so one
+  student's answer stalls the whole room's `/state`. The pool is 50, not 15:
+  connections here are file handles, and a pool smaller than the thread pool
+  turns "busy" into "exhausted". `pool_timeout` is 10 s rather than 30, so a
+  request that cannot be served fails while somebody is still watching.
+- **The app caps how many requests it lets in at once** (`REQUEST_SLOTS` in
+  `app/main.py`), sized *below* the connection pool so exhausting the pool is
+  not something that can happen — the queue forms at the door, where waiting
+  is all it does. A hall is not a steady load: nothing for four minutes, then
+  150 phones inside one second. Admitting all of them does not get the work
+  done faster; it only makes them starve each other, and requests that would
+  have succeeded a moment later fail instead. Only a queue still not moving
+  after `QUEUE_SECONDS` is refused, with **503 and `Retry-After`** — 503 says
+  "ask again", which is true and which the student view acts on by re-sending
+  the answer with a jittered backoff; a 500 says the server is broken and
+  invites nobody to retry. The SSE stream is exempt (it is open all lecture
+  and holds no connection, so counting it would wedge the app inside one
+  class), and so is `/api/health`, which has to answer *while* everything else
+  is queueing.
+- **`GET /api/health` reports the connection pool and the journal mode.** The
+  freeze is invisible from outside — requests stop being answered while health
+  keeps saying ok, because it needs no database — so `checked_out` pinned at
+  `size` is the one reading that names it, from a phone, mid-lecture. The
+  journal mode is read once at startup and cached for the same reason: an
+  endpoint that queried the database would be the first casualty of the
+  failure it exists to report.
 - **Question text is Markdown**, rendered *and sanitised on the server*
   (`app/markdown.py`, markdown-it-py + nh3) and exposed as `text_html`
   alongside the source. Clients bind it with `[innerHTML]`, so Angular
@@ -431,6 +472,33 @@ URL so the QR code resolves. See the README.
   the things only a browser can see: that the projected QR image actually
   loads (`naturalWidth > 0`), and that a student's page updates over SSE
   without a reload. Run it before claiming a UI change works.
+- **Nor is a green suite evidence it survives a class.** Every failure this app
+  has had in front of students was about 150 people doing one thing in the same
+  second, and a test suite does one thing at a time. `backend/loadtest/
+  lecture.py` drives a whole lecture at a running instance — a class logs in,
+  each student holds an SSE stream open the way a phone does, a bout opens,
+  everyone answers at once, and **the teacher refreshes the projected view in
+  the middle of the burst**, which is the collision that prompted it. It
+  reports latency percentiles per endpoint, every error, and the peak of the
+  connection pool sampled from `/api/health` throughout.
+
+  ```bash
+  cd backend && python -m loadtest.lecture --base-url http://localhost:8000
+  ```
+
+  Read it for *relative* signals — one endpoint far slower than the rest, a p99
+  an order of magnitude past its p50, a 500, a pool pinned at its limit — and
+  not for absolute capacity: the server and 150 Python clients share one
+  machine, so the numbers are pessimistic by a large and unknown factor. Point
+  it at a throwaway instance; it creates users and answers as them, and it
+  needs mock login, so it cannot reach production.
+
+  What it found is fixed and pinned in `tests/test_load_guards.py`, as
+  statements about the code rather than as timings — a test that fails when CI
+  is busy gets deleted within a month. Before it: 150 students arriving inside
+  a second produced 703 failed requests and 30-second hangs. After: 300
+  students answering inside 0.2 s, twice the class in a burst 25× tighter than
+  a real one, produced none.
 - **Privacy:** individual answers are personal data (GDPR). Never expose
   per-student answers to other students; teacher views show aggregates.
   Provide an export (CSV) of aggregates, and keep any per-student export
@@ -453,9 +521,31 @@ URL so the QR code resolves. See the README.
   None, and the participation report for *every* session using that question
   raised instead of rendering. Deleting a question that has been asked is now
   refused (409), and the report skips a stranded round rather than failing.
-  See `tests/test_answers_survive.py`. Since the database is a single SQLite
-  file with no backup, exporting `participation.csv` after a lecture is the
-  only real safeguard.
+  See `tests/test_answers_survive.py`. The database is a single SQLite file
+  with no replication and no snapshots, so **`GET /api/backup.zip`** exists:
+  the whole database (via `VACUUM INTO`, which is consistent under a live
+  lecture where a file copy could be torn), the uploaded figures (questions
+  reference them by path, so a database restored without them shows broken
+  images), and the configuration. Teacher-only, and the archive holds every
+  student's name and answers, so it is as sensitive as the Participants view.
+
+  **Secrets are redacted from the configuration**, by key *pattern* rather
+  than by a list so a setting added later is covered by default — and a
+  password inside a `DATABASE_URL` with it. The Canvas token acts as the
+  teacher in Canvas, where the grades are, and the app's own rule is that it
+  never reaches a client; an archive that sits in a downloads folder must not
+  be the exception. The keys stay, since they are what tells you what to set
+  on a new host, and the values are all obtainable again. If a
+  restore-everything-including-credentials bundle is ever wanted, it needs to
+  be a deliberate, separately-argued opt-in.
+
+  The snapshot is written under a random filename rather than `quizbinf.db`:
+  `VACUUM INTO` refuses to overwrite, so naming it after its source breaks the
+  moment the workspace and the data directory coincide.
+
+  It is still a manual copy taken at one moment — nothing is scheduled or
+  off-site — so exporting `participation.csv` after a lecture remains worth
+  doing.
 - **Editing a question follows the same principle.** Text, choice wording,
   choice order and which choice is correct can all be changed at any time,
   including after the question has been asked — fixing the wrong answer being
@@ -559,6 +649,11 @@ CHROME_BIN=/path/to/chrome npx ng test --watch=false --karma-config=karma.conf.j
 # the production image does, and drives one lecture end to end
 cd frontend && npm run e2e
 CHROME_BIN=/path/to/chrome npm run e2e                # if Chromium is not on PATH
+
+# load test: a class of 150 against a running throwaway instance, including
+# the teacher refreshing the projected view mid-burst
+cd backend && python -m loadtest.lecture --base-url http://localhost:8000
+python -m loadtest.lecture --students 300 --burst-seconds 0.2   # harder than reality
 ```
 
 ### Migrations
@@ -605,6 +700,7 @@ alembic upgrade head
 | `GET /api/sessions/{code}/questions/{id}/comparison` | teacher | pre vs post counts |
 | `GET /api/sessions/{code}/questions/{id}/discussants?count=` | teacher | draw students at random from those who answered — **names only** |
 | `DELETE /api/sessions/{code}/questions/{id}/rounds` | teacher | reset a question — **discards its answers** so it can be run again |
+| `GET /api/backup.zip` | teacher | the whole volume: database, figures, config with secrets redacted |
 | `POST /api/images` | teacher | upload a figure; returns Markdown to paste |
 | `POST /api/markdown/preview` | teacher | render Markdown for the authoring preview |
 | `GET /api/sessions/{code}/state` | student | full state snapshot (resync) |

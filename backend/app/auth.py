@@ -172,6 +172,23 @@ def current_user(
     # time away from the app rather than time since logging in.
     if datetime.now(timezone.utc) - issued_at > timedelta(seconds=SESSION_RENEW_AFTER):
         setattr(request.state, RENEW_FLAG, user.username)
+
+    # Hand the pooled connection back before returning.
+    #
+    # The SELECT above opened a transaction, and a Session in a transaction
+    # holds a connection until something ends it. Dependencies and endpoints
+    # are two separate hops through the thread pool, so without this the
+    # connection is held across the wait for a *second* thread — by every
+    # request in flight, whether or not it is doing anything. A class opening
+    # the app together therefore wanted one connection each while forty
+    # threads did the work, and the pool ran dry: the requests that had
+    # already been accepted were the ones starving each other.
+    #
+    # `commit` rather than `rollback`, because this session is configured with
+    # `expire_on_commit=False`: the attributes of `user` stay loaded, so the
+    # endpoint reads them without going back to the database. There is nothing
+    # to write here — the commit is only how a read-only transaction is ended.
+    db.commit()
     return user
 
 
