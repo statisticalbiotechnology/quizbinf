@@ -74,12 +74,19 @@ one.
 
    ```bash
    cd backend
+   . .venv/bin/activate        # the harness needs httpx, from the dev extra:
+   pip install -e ".[dev]"     # first time only
+
    export QUIZBINF_LOADTEST_KEY='…'
    export QUIZBINF_TEACHER_COOKIE='…'
    python -m loadtest.lecture \
        --base-url https://quizbinf.serve.scilifelab.se \
        --students 200 --questions 4
    ```
+
+   `ModuleNotFoundError: No module named 'httpx'` means the system Python is
+   running this rather than the virtualenv. Both exports have to happen in the
+   same shell as the run — a fresh terminal starts without them.
 
    It prints the session code before it does anything, purges at the end, and
    reports what it removed.
