@@ -55,20 +55,38 @@ one.
    key on a door that creates accounts is worse than no door.
 
 2. **Get a teacher cookie.** Log in to the deployment in a browser as yourself,
-   then copy the `quizbinf_session` cookie value (DevTools → Application →
-   Cookies). It is your session: treat it as your password.
+   then copy the `quizbinf_session` cookie value: **DevTools → Application (or
+   Storage) → Cookies → `https://quizbinf.serve.scilifelab.se`**, and copy the
+   Value column. It is `HttpOnly`, so `document.cookie` in the console will not
+   show it — the storage panel is the only way to read it.
+
+   It is a **bearer token for your account**, not a reference to a session the
+   server tracks: it is signed rather than stored, so it works for anyone
+   holding a copy until it expires (`SESSION_MAX_AGE`, a week of disuse, and
+   it slides forward while in use). **Logging out does not revoke it** — that
+   only deletes your browser's copy. The one way to invalidate an escaped
+   cookie is to rotate `SESSION_SECRET`, which signs every user out. So keep
+   it in the environment, not in a file or a command line, and close the
+   terminal when you are done.
 
 3. **Run it.** Both secrets go in the environment, never on the command line —
    a command line is visible to `ps` and lands in your shell history.
 
    ```bash
    cd backend
+   . .venv/bin/activate        # the harness needs httpx, from the dev extra:
+   pip install -e ".[dev]"     # first time only
+
    export QUIZBINF_LOADTEST_KEY='…'
    export QUIZBINF_TEACHER_COOKIE='…'
    python -m loadtest.lecture \
        --base-url https://quizbinf.serve.scilifelab.se \
        --students 200 --questions 4
    ```
+
+   `ModuleNotFoundError: No module named 'httpx'` means the system Python is
+   running this rather than the virtualenv. Both exports have to happen in the
+   same shell as the run — a fresh terminal starts without them.
 
    It prints the session code before it does anything, purges at the end, and
    reports what it removed.

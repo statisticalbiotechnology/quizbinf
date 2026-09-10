@@ -38,9 +38,51 @@ from dataclasses import dataclass, field
 
 import httpx
 
-# A phone that has scrolled away is still connected; the class does not close
-# its tabs. Every student therefore holds a stream for the whole run.
-STREAM_LIMIT = 400
+#: Sockets one simulated student may hold at once.
+#:
+#: A browser opens about six connections per origin, so this is what a phone
+#: does — and, more to the point, what this process can afford. Each student
+#: is a separate client with its own cookie jar, so a per-client limit of 400
+#: meant two hundred students could ask the kernel for 80,000 sockets: the
+#: run died of `ConnectError: All connection attempts failed` before it had
+#: measured anything, which reads like the server refusing connections and is
+#: not.
+PER_CLIENT_CONNECTIONS = 6
+
+#: Room for the sockets above plus the process's own files, with slack. A
+#: student holds one SSE stream for the whole lecture, so the floor is one per
+#: student whatever else is happening.
+def file_descriptors_needed(students: int) -> int:
+    return students * PER_CLIENT_CONNECTIONS + 256
+
+
+def raise_file_descriptor_limit(students: int) -> str | None:
+    """Lift this process's own fd ceiling, or say what to do about it.
+
+    The default soft limit is often 1024, which two hundred students exceed
+    during the arrival stampede — and the failure surfaces as a connection
+    error that looks like the server's fault. The soft limit can usually be
+    raised up to the hard limit without privilege, so do that rather than
+    making the operator discover `ulimit -n` from a traceback.
+    """
+    import resource
+
+    needed = file_descriptors_needed(students)
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft >= needed:
+        return None
+    target = min(needed, hard)
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (ValueError, OSError) as e:  # pragma: no cover - platform-dependent
+        return f"could not raise the open-file limit from {soft}: {e!r}"
+    if target < needed:
+        return (
+            f"the open-file limit is capped at {hard} by the system, but about "
+            f"{needed} are needed for {students} students. Run fewer students, "
+            f"or raise the hard limit (`ulimit -Hn`)."
+        )
+    return None
 
 #: Must match `app.auth.COOKIE_NAME` — this is the cookie a teacher copies out
 #: of their browser to lend this run their own (already existing) privilege.
@@ -285,9 +327,46 @@ async def teacher_view_refresh(
     recorder.add(Sample("TEACHER REFRESH (whole)", time.perf_counter() - started, 200))
 
 
+async def purge(args: argparse.Namespace, teacher: httpx.AsyncClient, code: str) -> None:
+    """Take the rehearsal back out.
+
+    On a throwaway instance this is tidiness; against a live deployment it is
+    the point — the session and the students it invented would otherwise be
+    permanent residents of a database that holds a real class. The session is
+    flagged, so no attendance report counts it even before this, but rows
+    nobody wants are still rows.
+    """
+    if not args.purge:
+        print(f"left session {code} in place (--no-purge); DELETE /api/sessions/{code} to remove")
+        return
+    try:
+        gone = await teacher.request("DELETE", f"/api/sessions/{code}", timeout=60)
+    except Exception as e:  # noqa: BLE001 — say what is left behind, whatever went wrong
+        gone = None
+        note = repr(e)
+    else:
+        note = f"HTTP {gone.status_code} {gone.text[:200]}"
+    if gone is not None and gone.status_code == 200:
+        print(f"purged session {code}: {json.dumps(gone.json())}")
+        return
+    print(
+        f"COULD NOT PURGE session {code}: {note}\n"
+        f"Remove it by hand, as the teacher:\n"
+        f"  curl -X DELETE -H \"Cookie: {SESSION_COOKIE}=$QUIZBINF_TEACHER_COOKIE\" \\\n"
+        f"    {args.base_url.rstrip('/')}/api/sessions/{code}",
+        file=sys.stderr,
+    )
+
+
 async def run(args: argparse.Namespace) -> int:
     recorder = Recorder()
-    limits = httpx.Limits(max_connections=STREAM_LIMIT, max_keepalive_connections=STREAM_LIMIT)
+    warning = raise_file_descriptor_limit(args.students)
+    if warning:
+        print(f"warning: {warning}", file=sys.stderr)
+    limits = httpx.Limits(
+        max_connections=PER_CLIENT_CONNECTIONS,
+        max_keepalive_connections=PER_CLIENT_CONNECTIONS,
+    )
 
     def new_client() -> httpx.AsyncClient:
         return httpx.AsyncClient(base_url=args.base_url, limits=limits, timeout=args.timeout)
@@ -398,6 +477,26 @@ async def run(args: argparse.Namespace) -> int:
     # (DELETE /api/sessions/<code>, teacher-only).
     print(f"session {code} (load-test): {args.questions} questions, {args.students} students")
 
+    try:
+        return await drive_the_lecture(args, recorder, new_client, teacher, code, quiz_id, questions)
+    finally:
+        # In a `finally`, because the first real run against the deployment
+        # died mid-arrival and left the session and two hundred throwaway
+        # students in the database — the one outcome this whole flow exists to
+        # avoid. A crash is exactly when cleanup matters most.
+        await purge(args, teacher, code)
+        await teacher.aclose()
+
+
+async def drive_the_lecture(
+    args: argparse.Namespace,
+    recorder: Recorder,
+    new_client,
+    teacher: httpx.AsyncClient,
+    code: str,
+    quiz_id: int,
+    questions: list[dict],
+) -> int:
     pool_readings: list[dict] = []
     watching = asyncio.Event()
     watcher = asyncio.create_task(watch_health(new_client(), watching, pool_readings))
@@ -501,27 +600,6 @@ async def run(args: argparse.Namespace) -> int:
 
     health = await teacher.get("/api/health")
 
-    # Take the rehearsal back out. On a throwaway instance this is tidiness;
-    # against a live deployment it is the point — the session and the students
-    # it invented would otherwise be permanent residents of a database that
-    # holds a real class. The session is flagged, so no attendance report
-    # counted it even before this, but rows nobody wants are still rows.
-    if args.purge:
-        gone = await teacher.request("DELETE", f"/api/sessions/{code}")
-        if gone.status_code == 200:
-            print(f"purged session {code}: {json.dumps(gone.json())}")
-        else:
-            print(
-                f"COULD NOT PURGE session {code}: HTTP {gone.status_code} "
-                f"{gone.text[:200]}\n"
-                f"Remove it by hand: DELETE /api/sessions/{code} as the teacher.",
-                file=sys.stderr,
-            )
-    else:
-        print(f"left session {code} in place (--no-purge); DELETE /api/sessions/{code} to remove")
-
-    await teacher.aclose()
-
     report(recorder)
     checked_out = [r.get("checked_out") for r in pool_readings]
     unreachable = sum(1 for c in checked_out if c is None)
@@ -578,8 +656,12 @@ def main() -> int:
         help=(
             f"value of the `{SESSION_COOKIE}` cookie from a browser already "
             "logged in as the teacher, for a deployment whose only login is the "
-            "IdP. Defaults to $QUIZBINF_TEACHER_COOKIE. It is that person's "
-            "session: treat it as their password and log out afterwards."
+            "IdP. Defaults to $QUIZBINF_TEACHER_COOKIE. It is a bearer token "
+            "for that person's account, good for up to SESSION_MAX_AGE (a "
+            "week) — and logging out does NOT revoke it, because it is signed "
+            "rather than stored, so anyone holding a copy stays logged in. "
+            "Keep it out of files and shell history; rotating SESSION_SECRET "
+            "is the only way to invalidate one, and that signs everybody out."
         ),
     )
     parser.add_argument(
