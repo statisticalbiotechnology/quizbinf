@@ -265,9 +265,13 @@ quizbinf/
   lecture, holds no connection, so counting it would wedge the app inside one
   class) and `/api/health`, which has to answer *while* everything else is
   queueing.
-- **The cap is configuration, not a constant.** `REQUEST_SLOTS=0` in the
-  volume's config file switches it off; `REQUEST_SLOTS` and
-  `REQUEST_QUEUE_SECONDS` retune it. A limit whose only remedy is building and
+- **The cap is configuration, not a constant** — and so is the write queue's
+  timeout. `REQUEST_SLOTS=0` in the volume's config file switches the cap off;
+  `REQUEST_SLOTS` and `REQUEST_QUEUE_SECONDS` retune it, and
+  `WRITE_QUEUE_SECONDS` retunes how long a request waits for the right to
+  write. That last one is the app's hardest limit, since SQLite takes one
+  writer at a time, and it is the one most likely to bite in front of a
+  class. A limit whose only remedy is building and
   deploying a new image is one nobody can back out of with a class in the
   room, and this one has already had to be.
 - **A shed request must say what is holding the slots, not how many there are

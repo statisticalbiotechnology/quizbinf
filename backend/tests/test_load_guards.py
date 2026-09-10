@@ -465,7 +465,12 @@ def test_a_writer_that_cannot_get_a_turn_says_busy_rather_than_broken(monkeypatc
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    monkeypatch.setattr(db_module, "WRITE_QUEUE_SECONDS", 0.1)
+    # The setting, not the module constant: the timeout is read from
+    # configuration at each call so it can be retuned on a deployment without
+    # a rebuild. Patching the constant here passed anyway — by waiting the
+    # full five seconds — which is a test agreeing with itself rather than
+    # with the code.
+    monkeypatch.setattr(get_settings(), "write_queue_seconds", 0.1)
 
     probe = FastAPI()
     probe.add_exception_handler(WriteQueueTimeout, main.write_queue_timeout)
@@ -667,3 +672,19 @@ def test_a_changed_role_is_still_written(monkeypatch, client, make_client):
     after = make_client()
     login(after, "promoted")
     assert after.get("/api/auth/me").json()["role"] == "teacher"
+
+
+def test_the_write_timeout_can_be_retuned_without_a_rebuild(monkeypatch):
+    """SQLite's one-writer limit is the app's hardest, so its timeout is
+    configuration.
+
+    The request cap already learned this: a limit whose only remedy is
+    building and deploying a new image is one nobody can back out of with a
+    class in the room, and that cap had to be backed out of exactly once. The
+    write queue is the same shape of thing and reaches its ceiling sooner —
+    `WRITE_QUEUE_SECONDS` in the volume's config file, and a restart.
+    """
+    settings = get_settings()
+    assert db_module._write_timeout() == settings.write_queue_seconds
+    monkeypatch.setattr(settings, "write_queue_seconds", 12.5)
+    assert db_module._write_timeout() == 12.5

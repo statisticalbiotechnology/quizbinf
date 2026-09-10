@@ -59,11 +59,22 @@ POOL_TIMEOUT = 10
 #: contention is rare; it is not, any more, the queue a class waits in.
 SQLITE_BUSY_TIMEOUT_MS = 15_000
 
-#: How long a request will queue for the right to write before giving up.
-#: Matched to `REQUEST_QUEUE_SECONDS` in `main.py`: past this the student has
-#: given up, and refusing with a 503 that says "ask again" beats a 500 that
-#: says the server is broken.
+#: The default time a request will queue for the right to write before giving
+#: up. Matched to `REQUEST_QUEUE_SECONDS` in `main.py`: past this the student
+#: has given up, and refusing with a 503 that says "ask again" beats a 500
+#: that says the server is broken.
+#:
+#: Read from settings at each call rather than captured here, so
+#: `WRITE_QUEUE_SECONDS` in the volume's config file retunes it with a
+#: restart. SQLite takes one writer at a time, which makes this the app's
+#: hardest limit — and a limit whose only remedy is building a new image is
+#: one nobody can back out of with a class in the room. This repository has
+#: already learned that once, from the request cap.
 WRITE_QUEUE_SECONDS = 5.0
+
+
+def _write_timeout() -> float:
+    return get_settings().write_queue_seconds
 
 
 class WriteQueueTimeout(Exception):
@@ -146,18 +157,19 @@ def writing(db: Session) -> Iterator[Session]:
         return
 
     global _waiting, _longest_wait
+    timeout = _write_timeout()
     with _waiting_lock:
         _waiting += 1
     started = time.perf_counter()
     try:
-        got_it = _write_gate.acquire(timeout=WRITE_QUEUE_SECONDS)
+        got_it = _write_gate.acquire(timeout=timeout)
     finally:
         waited = time.perf_counter() - started
         with _waiting_lock:
             _waiting -= 1
             _longest_wait = max(_longest_wait, waited)
     if not got_it:
-        raise WriteQueueTimeout(f"waited {WRITE_QUEUE_SECONDS}s to write")
+        raise WriteQueueTimeout(f"waited {timeout}s to write")
 
     _local.depth = 1
     try:
