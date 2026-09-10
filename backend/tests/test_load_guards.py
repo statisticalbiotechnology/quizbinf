@@ -266,3 +266,47 @@ def test_answers_still_arrive_when_many_are_sent_at_once(teacher_client, make_cl
         f"/api/sessions/{code}/rounds/{round_['id']}/histogram"
     ).json()
     assert histogram["total"] == 12, "an answer was lost or double-counted under load"
+
+
+def test_rejoining_does_not_write_every_time(teacher_client, make_client):
+    """`/state` and the SSE connect must not each cost a write transaction.
+
+    `last_seen_at` is read nowhere in the app, so refreshing it on every call
+    bought nothing — and writes serialise, so on a deployment whose volume is
+    slower than a local disk it was a real cost paid by every arrival and
+    every reconnect. A rehearsal against the real host logged one login
+    holding its slot for 25 seconds while a class arrived together.
+    """
+    from sqlalchemy import event as sa_event
+
+    from app.db import engine
+    from app.models import SessionParticipant
+
+    quiz_id, _, _ = make_quiz_with_question(teacher_client)
+    code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
+    student = make_client()
+    login(student, "rejoiner")
+
+    writes: list[str] = []
+
+    @sa_event.listens_for(engine, "before_cursor_execute")
+    def count_writes(conn, cursor, statement, params, context, executemany):
+        if statement.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")):
+            writes.append(statement.split()[0].upper())
+
+    try:
+        assert student.get(f"/api/sessions/{code}/state").status_code == 200
+        first = len([w for w in writes if w == "INSERT"])
+        writes.clear()
+        # The same student comes back — a resync, a reconnecting phone.
+        for _ in range(5):
+            assert student.get(f"/api/sessions/{code}/state").status_code == 200
+    finally:
+        sa_event.remove(engine, "before_cursor_execute", count_writes)
+
+    assert first == 1, "joining must still record the participant once"
+    assert writes == [], f"re-joining wrote {writes} when nothing needed saying"
+
+    # And the row is still there, so `joined` is unaffected.
+    with SessionLocal() as db:
+        assert db.query(SessionParticipant).count() == 1

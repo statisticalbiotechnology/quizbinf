@@ -107,6 +107,20 @@ def submit_answer(db: Session, round_: Round, user: User, choice: Choice) -> Ans
     return answer
 
 
+#: How stale `last_seen_at` may get before it is worth a write.
+#:
+#: Nothing in the app reads it — `joined` is a row count and `connected` comes
+#: from the SSE broadcaster — so refreshing it on every call bought nothing
+#: and cost a write transaction each time. That matters because a student
+#: arriving already causes three of them (login, `/state`, the SSE connect),
+#: every reconnect causes another, and writes serialise: a rehearsal against
+#: the deployment logged a single login holding its slot for 25 seconds while
+#: two hundred arrived at once, on a mounted volume far slower than a local
+#: disk. The value keeps its meaning to the minute in case something reads it
+#: later; what it stops being is a write per request.
+PARTICIPANT_TOUCH_SECONDS = 60
+
+
 def record_participant(db: Session, session: QuizSession, user: User) -> None:
     """Note that `user` has the session open. Idempotent; safe to call often."""
     participant = db.scalar(
@@ -116,7 +130,14 @@ def record_participant(db: Session, session: QuizSession, user: User) -> None:
         )
     )
     if participant is not None:
-        participant.last_seen_at = utcnow()
+        seen = participant.last_seen_at
+        if seen.tzinfo is None:  # SQLite hands back naive datetimes
+            seen = seen.replace(tzinfo=timezone.utc)
+        if (utcnow() - seen).total_seconds() >= PARTICIPANT_TOUCH_SECONDS:
+            participant.last_seen_at = utcnow()
+        # Commit either way: the SELECT above opened a transaction, and a
+        # Session holding one keeps a pooled connection checked out. Skipping
+        # the write must not turn into holding a connection instead.
         db.commit()
         return
 
