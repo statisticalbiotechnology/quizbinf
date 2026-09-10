@@ -55,15 +55,16 @@ def test_the_report_survives_a_question_deleted_by_an_earlier_build(
 ):
     """Data in the wild may already have stranded rounds; reporting on the
     rest of the session must not be blocked by them."""
-    from app.db import SessionLocal
+    from app.db import SessionLocal, writing
     from app.models import Question
 
     quiz_id, question_id, code = _run_a_question(teacher_client, student_client)
 
     # Reproduce the damage the old delete path caused, bypassing the new guard.
     db = SessionLocal()
-    db.delete(db.get(Question, question_id))
-    db.commit()
+    with writing(db):
+        db.delete(db.get(Question, question_id))
+        db.commit()
     db.close()
 
     assert teacher_client.get(f"/api/sessions/{code}/participation").status_code == 200

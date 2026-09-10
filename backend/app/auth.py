@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import Settings, get_settings
-from .db import get_db
+from .db import get_db, write_path
 from .models import Role, User
 
 COOKIE_NAME = "quizbinf_session"
@@ -127,6 +127,7 @@ def passwords_match(supplied: str | None, configured: str | None) -> bool:
     )
 
 
+@write_path
 def get_or_create_user(db: Session, username: str, display_name: str, settings: Settings) -> User:
     role = Role.teacher if username in settings.teachers else Role.student
     user = db.scalar(select(User).where(User.username == username))

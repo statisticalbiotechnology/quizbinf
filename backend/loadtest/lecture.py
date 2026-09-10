@@ -467,6 +467,19 @@ async def run(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
+        # Signing in is not the same as being a teacher: mock login accepts
+        # any username and makes a *student* of one that is not in
+        # TEACHER_USERNAMES. Unchecked, that one-line configuration mistake
+        # surfaced as a TypeError inside make_quiz, because every teacher
+        # request 403s and `{"detail": ...}` iterates as its keys.
+        if response.json().get("role") != "teacher":
+            print(
+                f"{args.teacher} signed in as a student, not a teacher.\n"
+                "Put that username in TEACHER_USERNAMES on the instance, or "
+                "pass --teacher to name one that is already there.",
+                file=sys.stderr,
+            )
+            return 2
 
     # One student, all the way through, before summoning two hundred.
     #

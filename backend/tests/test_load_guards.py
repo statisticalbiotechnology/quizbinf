@@ -15,13 +15,23 @@ within a month.
 
 import asyncio
 import inspect
+import time
 
 from sqlalchemy import text
 
 from app import main
 from app.auth import COOKIE_NAME, current_user
 from app.config import get_settings
-from app.db import SQLITE_POOL_SIZE, SessionLocal, engine, journal_mode
+from app import db as db_module
+from app import service
+from app.db import (
+    SQLITE_POOL_SIZE,
+    SessionLocal,
+    WriteQueueTimeout,
+    engine,
+    journal_mode,
+    writing,
+)
 from app.routers import sessions
 from tests.conftest import login, make_quiz_with_question
 
@@ -377,3 +387,224 @@ def test_rejoining_does_not_write_every_time(teacher_client, make_client):
     # And the row is still there, so `joined` is unaffected.
     with SessionLocal() as db:
         assert db.query(SessionParticipant).count() == 1
+
+
+def test_a_reader_does_not_wait_for_a_writer(teacher_client, make_client):
+    """The regression the *second* load test found, and the reason for the
+    read/write split in `db.py`.
+
+    The first fix for the read-to-write upgrade made every transaction
+    immediate — including the SELECT `current_user` does on the way into every
+    request in the app. That took SQLite's exclusive write lock once per
+    request, so the whole application serialised behind a lock only one
+    request could hold at a time. Against the deployment: 350 answers shed
+    with 503, the concurrency cap saturated at 40 in flight while the
+    connection pool sat almost idle, and only 41 of 200 students managed to
+    join at all.
+
+    A pool with capacity to spare and a saturated request cap is the signature
+    of it: the requests were not waiting for the database, they were waiting
+    for each other.
+
+    So: hold the write gate, and require a plain read to be served anyway.
+    Under WAL a deferred reader sees the last committed state and waits for
+    nobody, which is the whole reason WAL is on. Make `_begin` in `db.py`
+    unconditional again and this test is what stops it.
+    """
+    import threading
+
+    quiz_id, question_id, _ = make_quiz_with_question(teacher_client)
+    code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
+
+    student = make_client()
+    login(student, "reader")
+    student.get(f"/api/sessions/{code}/state")  # so the participant row exists
+
+    holding = threading.Event()
+    release = threading.Event()
+
+    def hold_the_write_lock():
+        db = SessionLocal()
+        try:
+            with writing(db):
+                db.execute(text("UPDATE sessions SET code = code"))
+                holding.set()
+                release.wait(timeout=10)
+        finally:
+            db.close()
+
+    writer = threading.Thread(target=hold_the_write_lock, daemon=True)
+    writer.start()
+    try:
+        assert holding.wait(timeout=5), "the writer never took the lock"
+        started = time.perf_counter()
+        resp = student.get(f"/api/sessions/{code}/state")
+        took = time.perf_counter() - started
+    finally:
+        release.set()
+        writer.join(timeout=10)
+
+    assert resp.status_code == 200
+    # Generously above anything a local read costs and far below the ten
+    # seconds the writer holds the lock for: this asserts *whether* it waited,
+    # not how fast the machine is.
+    assert took < 2.0, f"a read waited {took:.1f}s for a writer that holds the lock"
+
+
+def test_a_writer_that_cannot_get_a_turn_says_busy_rather_than_broken(monkeypatch):
+    """Refusing to write is a 503, never a 500.
+
+    The two are not interchangeable to a phone: 503 with `Retry-After` says
+    "ask again", which the student view acts on by re-sending the answer with
+    a jittered backoff, while a 500 says the server is broken and invites
+    nobody to retry. What this replaced was SQLite exhausting its busy timeout
+    and raising `database is locked`, which reached the student as a 500.
+    """
+    import threading
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(db_module, "WRITE_QUEUE_SECONDS", 0.1)
+
+    probe = FastAPI()
+    probe.add_exception_handler(WriteQueueTimeout, main.write_queue_timeout)
+
+    @probe.post("/write")
+    def write() -> dict:
+        db = SessionLocal()
+        try:
+            with writing(db):
+                db.execute(text("UPDATE sessions SET code = code"))
+            return {"ok": True}
+        finally:
+            db.close()
+
+    holding = threading.Event()
+    release = threading.Event()
+
+    def hog():
+        db = SessionLocal()
+        try:
+            with writing(db):
+                holding.set()
+                release.wait(timeout=10)
+        finally:
+            db.close()
+
+    thread = threading.Thread(target=hog, daemon=True)
+    thread.start()
+    try:
+        assert holding.wait(timeout=5)
+        resp = TestClient(probe, raise_server_exceptions=False).post("/write")
+    finally:
+        release.set()
+        thread.join(timeout=10)
+
+    assert resp.status_code == 503, resp.text
+    assert resp.headers.get("Retry-After") == "1"
+
+
+def test_declaring_a_write_twice_is_not_a_deadlock():
+    """`writing()` is reentrant, because the call sites nest.
+
+    A router declares a write and calls a service function that declares one
+    too — `create_session` and `open_round` are both shapes of this. A
+    non-reentrant lock would hang the request against itself, which is exactly
+    the failure the previous round of this work was about.
+    """
+    db = SessionLocal()
+    try:
+        with writing(db):
+            with writing(db):
+                db.execute(text("UPDATE sessions SET code = code"))
+    finally:
+        db.close()
+
+
+def test_reading_the_state_takes_no_write_lock(teacher_client, make_client):
+    """The busiest path in the app must not declare itself a writer.
+
+    `record_participant` runs on `/state` and on the SSE connect, so it is on
+    every request a student makes, and the throttle means it writes on almost
+    none of them. Wrapping the whole function in `writing()` would have been
+    the natural way to satisfy the write-path rule and would have reinstated
+    the serialisation this suite exists to prevent, from the busiest path
+    there is.
+    """
+    quiz_id, question_id, _ = make_quiz_with_question(teacher_client)
+    code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
+    student = make_client()
+    login(student, "settled")
+    student.get(f"/api/sessions/{code}/state")  # first call creates the row
+
+    seen = []
+    original = db_module.writing
+
+    def watched(db):
+        seen.append(True)
+        return original(db)
+
+    db_module.writing = watched
+    service.writing = watched
+    try:
+        assert student.get(f"/api/sessions/{code}/state").status_code == 200
+    finally:
+        db_module.writing = original
+        service.writing = original
+    assert not seen, "a settled student's /state asked for the write lock"
+
+
+def test_health_says_which_build_is_running(client):
+    """"The fix did not work" and "the fix was never deployed" look identical.
+
+    They looked identical for most of a week. `/api/health` now carries a hash
+    of the application's own source, so a load test against a deployment can
+    be checked against the checkout it was supposed to be testing before its
+    numbers are believed.
+    """
+    body = client.get("/api/health").json()
+    assert body["code"] == main.CODE_FINGERPRINT
+    assert len(body["code"]) == 8
+    # Stable across calls: computed once at startup, not per request.
+    assert client.get("/api/health").json()["code"] == body["code"]
+
+
+def test_a_write_outside_writing_is_noticed():
+    """The split is only as good as its call sites, so a missed one is loud.
+
+    In production this logs and lets the statement through — it is the
+    behaviour every build before `writing()` had, and breaking a feature
+    outright is worse than the rare 500 it risks. In the test suite it raises,
+    which is what makes CI the place a missed write path is found. That
+    substitution is installed in `conftest.py` and is why every other test in
+    this repository is also an assertion that its write paths are declared.
+    """
+    noticed = []
+    original = db_module.on_undeclared_write
+    db_module.on_undeclared_write = noticed.append
+    db = SessionLocal()
+    try:
+        db.execute(text("UPDATE sessions SET code = code"))
+        db.commit()
+    finally:
+        db_module.on_undeclared_write = original
+        db.close()
+
+    assert noticed, "an undeclared write went unnoticed"
+    assert "UPDATE" in noticed[0]
+
+
+def test_health_reports_the_write_queue(client):
+    """The one number that tells this failure from the last one.
+
+    A saturated request cap over an idle connection pool is what *both* looked
+    like from outside: the previous fix's serialisation, and the pool
+    exhaustion before it. Telling them apart took deploying a change and
+    running the load test again. `waiting` says directly whether requests are
+    queueing for the write lock, which is the app's remaining hard limit and
+    the one a bigger machine does not raise.
+    """
+    queue = client.get("/api/health").json()["write_queue"]
+    assert queue["waiting"] == 0
+    assert queue["longest_wait"] >= 0
