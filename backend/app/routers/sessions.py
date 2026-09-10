@@ -86,17 +86,59 @@ async def _broadcast_state(session_code: str) -> None:
 @router.post("", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
 def create_session(
     quiz_id: int,
+    loadtest: bool = False,
     db: Session = Depends(get_db),
     teacher: User = Depends(current_teacher),
 ) -> QuizSession:
+    """Start a lecture run of a quiz.
+
+    `loadtest=true` marks it a rehearsal rather than a lecture, which keeps it
+    out of every attendance report — see `QuizSession.is_loadtest`. It is worth
+    passing for any run that is not a real class, because nothing in the app
+    deletes a session afterwards except `DELETE /api/sessions/{code}`, which
+    refuses anything but a rehearsal.
+    """
     quiz = db.get(Quiz, quiz_id)
     if quiz is None or quiz.owner_id != teacher.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Quiz not found")
-    session = QuizSession(quiz_id=quiz.id)
+    session = QuizSession(quiz_id=quiz.id, is_loadtest=loadtest)
     db.add(session)
     db.commit()
     db.refresh(session)
     return session
+
+
+@router.delete("/{code}")
+def delete_loadtest_session(
+    code: str,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+) -> dict:
+    """Remove a rehearsal and everything it wrote.
+
+    The counterpart to `loadtest=true`, and the only way anything deletes a
+    session. It refuses a real one outright — answers are the one
+    irreplaceable thing in this app, and an endpoint that could take a
+    lecture's away by mistyping a six-character code would be worth more harm
+    than it saves. A rehearsal's rows were never worth anything, which is
+    exactly why they are safe to remove and worth removing: the throwaway
+    students it signed in are otherwise permanent residents of a database that
+    holds a real class.
+
+    Cascades through the session's rounds to their answers, then drops the
+    participant rows, then the throwaway students left with nothing to their
+    name. A student with answers in some *other* session is kept, which cannot
+    happen for a real student here but is checked rather than assumed.
+    """
+    session = _owned_session(db, code, teacher)
+    if not session.is_loadtest:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This is a real session. Only a load-test session can be deleted, "
+            "because its answers are the only ones that were never worth keeping.",
+        )
+    removed = service.delete_loadtest_session(db, session)
+    return removed
 
 
 @router.get("/{code}/join-url")

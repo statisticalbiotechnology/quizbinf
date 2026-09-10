@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import statistics
 import sys
@@ -40,6 +41,10 @@ import httpx
 # A phone that has scrolled away is still connected; the class does not close
 # its tabs. Every student therefore holds a stream for the whole run.
 STREAM_LIMIT = 400
+
+#: Must match `app.auth.COOKIE_NAME` — this is the cookie a teacher copies out
+#: of their browser to lend this run their own (already existing) privilege.
+SESSION_COOKIE = "quizbinf_session"
 
 
 @dataclass
@@ -172,8 +177,42 @@ async def login(client: httpx.AsyncClient, username: str) -> httpx.Response:
     return await client.post("/api/auth/mock-login", json={"username": username})
 
 
+async def sign_in_student(
+    client: httpx.AsyncClient, index: int, key: str | None
+) -> httpx.Response:
+    """Sign in one throwaway student, by whichever door this run may use.
+
+    With a key, `/api/auth/loadtest-login` — which mints students only, under
+    a reserved prefix, so a rehearsal against a live deployment cannot collide
+    with or impersonate anyone real. Without one, the instance offers mock
+    login and there is nobody to impersonate.
+    """
+    if key:
+        return await client.post(
+            "/api/auth/loadtest-login", json={"key": key, "name": f"s{index:04d}"}
+        )
+    return await login(client, f"loadstudent{index:03d}")
+
+
+#: Reused between runs, and named so it is obvious on the dashboard what it is
+#: and that it can be ignored.
+QUIZ_TITLE = "Load test (rehearsal — not a real quiz)"
+
+
 async def make_quiz(client: httpx.AsyncClient, questions: int) -> tuple[int, list[dict]]:
-    quiz = (await client.post("/api/quizzes", json={"title": "Load test"})).json()
+    """Find this run's quiz, or create it.
+
+    Reused rather than made afresh each time because the purge afterwards
+    removes the *session*, and nothing in this app deletes a quiz — so a new
+    one per run would leave the teacher's dashboard filling up with rehearsals
+    that cannot be tidied away.
+    """
+    existing = (await client.get("/api/quizzes")).json()
+    for quiz in existing:
+        if quiz["title"] == QUIZ_TITLE and len(quiz.get("questions", [])) == questions:
+            return quiz["id"], quiz["questions"]
+
+    quiz = (await client.post("/api/quizzes", json={"title": QUIZ_TITLE})).json()
     made = []
     for i in range(questions):
         made.append(
@@ -253,21 +292,111 @@ async def run(args: argparse.Namespace) -> int:
     def new_client() -> httpx.AsyncClient:
         return httpx.AsyncClient(base_url=args.base_url, limits=limits, timeout=args.timeout)
 
-    teacher = new_client()
-    response = await login(teacher, args.teacher)
-    if response.status_code != 200:
+    # Establish how this run may sign people in, before creating a single row.
+    #
+    # This script invents students and answers questions as them. On a
+    # throwaway instance that costs nothing; on a deployment with a real class
+    # in it, it writes into the database that holds their answers — so the
+    # only two ways in are a deployment that offers mock login (which
+    # `ENVIRONMENT=production` refuses, so an instance offering it has no real
+    # students by construction) or a `--loadtest-key` that somebody set
+    # deliberately. Checked against the server rather than trusted from this
+    # command line: a flag protects nobody from a mistyped `--base-url`.
+    try:
+        methods = (await new_client().get("/api/auth/methods")).json()
+    except Exception as e:  # noqa: BLE001
+        print(f"could not reach {args.base_url}: {e!r}", file=sys.stderr)
+        return 2
+    if not methods.get("mock_login") and not args.loadtest_key:
         print(
-            f"could not log in as {args.teacher}: HTTP {response.status_code} "
-            f"{response.text[:200]}\n"
-            "The instance needs MOCK_LOGIN=true and this username in "
-            "TEACHER_USERNAMES.",
+            f"REFUSING to load-test {args.base_url}: it does not offer mock login "
+            f"({methods}), so it is a real deployment with real students in it.\n"
+            "\n"
+            "Two ways forward, in `deploy/LOADTEST.md`:\n"
+            "  * point this at a throwaway instance with MOCK_LOGIN=true, or\n"
+            "  * set a long LOADTEST_KEY on the deployment and pass it here with\n"
+            "    --loadtest-key, which signs in throwaway students only and marks\n"
+            "    the session so no attendance report counts it as a lecture.",
+            file=sys.stderr,
+        )
+        return 2
+
+    teacher = new_client()
+    if args.teacher_cookie:
+        # A real deployment has no scriptable teacher login, and it must not
+        # grow one: the teacher views hold every student's participation
+        # record, so a key that could mint a teacher would be a way to read
+        # the class's personal data. The teacher instead signs in as
+        # themselves in a browser and lends this run the resulting cookie —
+        # no new privilege, and nothing here can exceed what they already had.
+        teacher.cookies.set(SESSION_COOKIE, args.teacher_cookie)
+        who = await teacher.get("/api/auth/me")
+        if who.status_code != 200 or who.json().get("role") != "teacher":
+            print(
+                f"the --teacher-cookie is not a teacher session: HTTP "
+                f"{who.status_code} {who.text[:200]}\n"
+                "Log in to the deployment in a browser and copy the "
+                f"`{SESSION_COOKIE}` cookie value.",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        response = await login(teacher, args.teacher)
+        if response.status_code != 200:
+            print(
+                f"could not log in as {args.teacher}: HTTP {response.status_code} "
+                f"{response.text[:200]}\n"
+                "The instance needs MOCK_LOGIN=true and this username in "
+                "TEACHER_USERNAMES, or pass --teacher-cookie.",
+                file=sys.stderr,
+            )
+            return 2
+
+    # One student, all the way through, before summoning two hundred.
+    #
+    # Every later failure looks the same in the table — a column of 401s — and
+    # says nothing about why. The commonest cause is not load at all: the
+    # session cookie is `Secure` when ENVIRONMENT=production, so it is dropped
+    # silently by any client talking plain HTTP, and the run then measures
+    # nothing but rejections.
+    probe = new_client()
+    signed_in = await sign_in_student(probe, 0, args.loadtest_key)
+    if signed_in.status_code != 200:
+        print(
+            f"a student could not sign in: HTTP {signed_in.status_code} "
+            f"{signed_in.text[:200]}",
+            file=sys.stderr,
+        )
+        return 2
+    me = await probe.get("/api/auth/me")
+    await probe.aclose()
+    if me.status_code != 200:
+        scheme = args.base_url.split(":", 1)[0]
+        print(
+            f"signing in worked, but the session did not stick: /api/auth/me "
+            f"returned HTTP {me.status_code}.\n"
+            + (
+                "The session cookie is Secure when ENVIRONMENT=production, and "
+                f"this run is talking {scheme}. Use an https:// base URL.\n"
+                if scheme == "http"
+                else "Check that the deployment is a single instance: two "
+                "processes with different session secrets reject each other's "
+                "cookies (compare `instance` and `secret` from /api/health).\n"
+            ),
             file=sys.stderr,
         )
         return 2
 
     quiz_id, questions = await make_quiz(teacher, args.questions)
-    code = (await teacher.post(f"/api/sessions?quiz_id={quiz_id}")).json()["code"]
-    print(f"session {code}: {args.questions} questions, {args.students} students")
+    made = await teacher.post(f"/api/sessions?quiz_id={quiz_id}&loadtest=true")
+    if made.status_code >= 400:
+        print(f"could not start a session: HTTP {made.status_code} {made.text[:200]}", file=sys.stderr)
+        return 2
+    code = made.json()["code"]
+    # Printed before anything else happens: if this run dies halfway, this is
+    # the code needed to clean up by hand
+    # (DELETE /api/sessions/<code>, teacher-only).
+    print(f"session {code} (load-test): {args.questions} questions, {args.students} students")
 
     pool_readings: list[dict] = []
     watching = asyncio.Event()
@@ -287,7 +416,9 @@ async def run(args: argparse.Namespace) -> int:
         # any of the API traffic below can happen at all.
         if args.page_load:
             await load_the_page(client, f"/s/{code}", recorder)
-        await recorder.timed("student login", lambda: login(client, f"loadstudent{index:03d}"))
+        await recorder.timed(
+            "student login", lambda: sign_in_student(client, index, args.loadtest_key)
+        )
         await recorder.timed(
             "student state", lambda: client.get(f"/api/sessions/{code}/state")
         )
@@ -369,6 +500,26 @@ async def run(args: argparse.Namespace) -> int:
     await asyncio.gather(*(c.aclose() for c in students), return_exceptions=True)
 
     health = await teacher.get("/api/health")
+
+    # Take the rehearsal back out. On a throwaway instance this is tidiness;
+    # against a live deployment it is the point — the session and the students
+    # it invented would otherwise be permanent residents of a database that
+    # holds a real class. The session is flagged, so no attendance report
+    # counted it even before this, but rows nobody wants are still rows.
+    if args.purge:
+        gone = await teacher.request("DELETE", f"/api/sessions/{code}")
+        if gone.status_code == 200:
+            print(f"purged session {code}: {json.dumps(gone.json())}")
+        else:
+            print(
+                f"COULD NOT PURGE session {code}: HTTP {gone.status_code} "
+                f"{gone.text[:200]}\n"
+                f"Remove it by hand: DELETE /api/sessions/{code} as the teacher.",
+                file=sys.stderr,
+            )
+    else:
+        print(f"left session {code} in place (--no-purge); DELETE /api/sessions/{code} to remove")
+
     await teacher.aclose()
 
     report(recorder)
@@ -410,6 +561,32 @@ def main() -> int:
         dest="page_load",
         action="store_false",
         help="skip the HTML and built assets; drive only the API",
+    )
+    parser.add_argument(
+        "--loadtest-key",
+        default=os.environ.get("QUIZBINF_LOADTEST_KEY", ""),
+        help=(
+            "LOADTEST_KEY of a deployment that has real students in it, so this "
+            "run signs in throwaway students instead of needing mock login. "
+            "Defaults to $QUIZBINF_LOADTEST_KEY, which is where it belongs — it "
+            "is a credential and a command line is not private."
+        ),
+    )
+    parser.add_argument(
+        "--teacher-cookie",
+        default=os.environ.get("QUIZBINF_TEACHER_COOKIE", ""),
+        help=(
+            f"value of the `{SESSION_COOKIE}` cookie from a browser already "
+            "logged in as the teacher, for a deployment whose only login is the "
+            "IdP. Defaults to $QUIZBINF_TEACHER_COOKIE. It is that person's "
+            "session: treat it as their password and log out afterwards."
+        ),
+    )
+    parser.add_argument(
+        "--no-purge",
+        dest="purge",
+        action="store_false",
+        help="keep the session and its throwaway students afterwards",
     )
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()

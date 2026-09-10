@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -161,6 +162,18 @@ class QuizSession(Base):
     quiz_id: Mapped[int] = mapped_column(ForeignKey("quizzes.id"))
     code: Mapped[str] = mapped_column(String(12), unique=True, index=True, default=new_session_code)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    #: A rehearsal against this deployment, not a lecture that happened.
+    #:
+    #: It exists because the attendance reports walk *every* session their
+    #: owner has run, and a session that ran rounds is a lecture to them — so
+    #: a load test against the live app would enter the Canvas gradebook
+    #: denominator and mark the whole real class absent from a lecture nobody
+    #: attended. `service.sessions_in_range` filters these out, which is the
+    #: single place that has to hold for every report at once.
+    is_loadtest: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
 
     quiz: Mapped[Quiz] = relationship()
     rounds: Mapped[list["Round"]] = relationship(
