@@ -578,8 +578,12 @@ def main() -> int:
         help=(
             f"value of the `{SESSION_COOKIE}` cookie from a browser already "
             "logged in as the teacher, for a deployment whose only login is the "
-            "IdP. Defaults to $QUIZBINF_TEACHER_COOKIE. It is that person's "
-            "session: treat it as their password and log out afterwards."
+            "IdP. Defaults to $QUIZBINF_TEACHER_COOKIE. It is a bearer token "
+            "for that person's account, good for up to SESSION_MAX_AGE (a "
+            "week) — and logging out does NOT revoke it, because it is signed "
+            "rather than stored, so anyone holding a copy stays logged in. "
+            "Keep it out of files and shell history; rotating SESSION_SECRET "
+            "is the only way to invalidate one, and that signs everybody out."
         ),
     )
     parser.add_argument(
