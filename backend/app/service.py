@@ -190,6 +190,17 @@ def delete_loadtest_session(db: Session, session: QuizSession) -> dict:
         )
         if still_answering:
             continue
+        # Every participant row this user has, not merely the ones in the
+        # session being deleted. A rehearsal that crashed and was re-run
+        # leaves the same names in more than one session, and removing the
+        # user while a row still pointed at them left a participant belonging
+        # to nobody — the same shape as the deleted question whose rounds
+        # survived it, which made the participation report raise instead of
+        # render for every session that used it.
+        for row in db.scalars(
+            select(SessionParticipant).where(SessionParticipant.user_id == user.id)
+        ):
+            db.delete(row)
         for claim in db.scalars(select(DeviceClaim).where(DeviceClaim.username == user.username)):
             db.delete(claim)
         db.delete(user)

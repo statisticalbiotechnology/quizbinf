@@ -207,3 +207,36 @@ def test_the_key_is_not_advertised(client, loadtest_on):
     rehearsable is not something a visitor needs to know."""
     assert "loadtest" not in client.get("/api/auth/methods").text.lower()
     assert Settings(loadtest_key=KEY).loadtest_allowed
+
+
+def test_purging_leaves_no_participant_belonging_to_nobody(teacher_client, make_client, loadtest_on):
+    """A rehearsal that crashed and was re-run puts the same throwaway names in
+    more than one session. Deleting the user while a participant row still
+    pointed at them left a row belonging to nobody — the same shape as the
+    deleted question whose rounds outlived it, which made the participation
+    report raise instead of render.
+    """
+    from app.db import SessionLocal
+    from app.models import SessionParticipant, User
+
+    quiz_id, _, _ = make_quiz_with_question(teacher_client)
+    first = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}&loadtest=true").json()["code"]
+    second = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}&loadtest=true").json()["code"]
+
+    fake = make_client()
+    _sign_in(fake, "s001")
+    # The same student joins both, as a re-run does.
+    assert fake.get(f"/api/sessions/{first}/state").status_code == 200
+    assert fake.get(f"/api/sessions/{second}/state").status_code == 200
+
+    teacher_client.delete(f"/api/sessions/{second}")
+
+    with SessionLocal() as db:
+        user_ids = {u.id for u in db.query(User).all()}
+        orphans = [
+            p for p in db.query(SessionParticipant).all() if p.user_id not in user_ids
+        ]
+        assert not orphans, f"{len(orphans)} participant row(s) point at a deleted user"
+
+    # And the other rehearsal is still deletable rather than wedged by the leftovers.
+    assert teacher_client.delete(f"/api/sessions/{first}").status_code == 200
