@@ -103,6 +103,21 @@ def test_authenticating_leaves_no_transaction_open(client):
         assert user.display_name and user.role is not None
 
 
+def test_health_does_not_queue_behind_the_thread_pool():
+    """It must run on the event loop, not in the thread pool.
+
+    Exempting it from the concurrency cap was not enough: FastAPI runs a
+    plain `def` endpoint in the thread pool, which is a second queue behind
+    the first. On a wedged deployment — forty requests stuck holding threads —
+    this endpoint took 23 seconds or timed out, at the one moment it exists
+    for. Nothing in it does I/O, so nothing justifies a thread.
+    """
+    assert inspect.iscoroutinefunction(main.health), (
+        "health must be an async def, or it waits for a thread pool that is "
+        "exhausted exactly when someone needs to know why"
+    )
+
+
 def test_health_answers_without_touching_the_database(client):
     """It is the one thing that still works when the database does not.
 

@@ -263,8 +263,17 @@ INSTANCE_ID = secrets.token_hex(4)
 
 
 @app.get("/api/health")
-def health() -> dict:
+async def health() -> dict:
     """Liveness, plus the two things that silently break logins.
+
+    `async def`, and that is the whole point of it. As a plain `def` FastAPI
+    ran it in the thread pool, so when forty requests were stuck holding
+    threads this endpoint queued behind them: it took 23 seconds or timed out
+    entirely on a wedged deployment — the one moment it exists for. Exempting
+    it from the concurrency cap was not enough, because the thread pool is a
+    second queue behind that one. Nothing here does I/O: the pool figures are
+    in-memory counters and the journal mode is read once at startup and
+    cached, so this can and must answer from the event loop.
 
     Neither announces itself. Non-persistent storage means the database is
     thrown away on every restart; a session secret that differs between

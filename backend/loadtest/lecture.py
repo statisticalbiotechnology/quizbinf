@@ -167,6 +167,36 @@ def report(recorder: Recorder) -> None:
 # --- the lecture -----------------------------------------------------------
 
 
+#: Errors that mean "no socket right now", as opposed to a reply we dislike.
+CONNECT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadError, httpx.RemoteProtocolError)
+
+
+async def stubborn(what, attempts: int = 6, first_wait: float = 1.0):
+    """Retry a request that could not get a connection at all.
+
+    Only for the handful of calls this run cannot do without — the teacher's
+    own, and the purge. A student's request is a measurement and must be
+    recorded as it happened; retrying one would launder a failure into a
+    success and flatter the numbers.
+
+    The teacher's are different. During the arrival burst, two hundred clients
+    on one machine can leave nothing spare for a two-hundred-and-first
+    connection, and a single `ConnectError` then killed the entire run — after
+    which the purge, being one more new connection, failed too and left the
+    rehearsal in the database. Waiting a second and asking again costs
+    nothing and is what a person would do.
+    """
+    last: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return await what()
+        except CONNECT_ERRORS as e:  # noqa: PERF203
+            last = e
+            if attempt < attempts - 1:
+                await asyncio.sleep(first_wait * (2**attempt))
+    raise last  # type: ignore[misc]
+
+
 async def watch_health(client: httpx.AsyncClient, stop: asyncio.Event, seen: list[dict]) -> None:
     """Poll `/api/health` throughout, and remember the worst pool reading.
 
@@ -340,7 +370,14 @@ async def purge(args: argparse.Namespace, teacher: httpx.AsyncClient, code: str)
         print(f"left session {code} in place (--no-purge); DELETE /api/sessions/{code} to remove")
         return
     try:
-        gone = await teacher.request("DELETE", f"/api/sessions/{code}", timeout=60)
+        # Stubbornly: this is the safety net, and it runs straight after the
+        # burst that may have used up every socket the machine had. Giving up
+        # on the first refusal is how a rehearsal got left in the production
+        # database twice.
+        gone = await stubborn(
+            lambda: teacher.request("DELETE", f"/api/sessions/{code}", timeout=60),
+            attempts=8,
+        )
     except Exception as e:  # noqa: BLE001 — say what is left behind, whatever went wrong
         gone = None
         note = repr(e)
@@ -506,27 +543,46 @@ async def drive_the_lecture(
     stop = asyncio.Event()
     streams: list[asyncio.Task] = []
 
+    # How many students may be mid-arrival at once.
+    #
+    # Arrivals are staggered over `--arrival-seconds`, which is enough while
+    # the server keeps up. When it does not — and finding that out is the
+    # point — each arrival takes longer, the next one starts anyway, and they
+    # pile up until this machine has no socket left for the next connection.
+    # That surfaces as `ConnectError: All connection attempts failed`, which
+    # reads like the server refusing us and is the load generator falling over
+    # instead. The queue belongs here, where it is bounded.
+    arriving = asyncio.Semaphore(args.arrival_concurrency)
+
     async def arrive(index: int, client: httpx.AsyncClient) -> None:
         # The class does not arrive in lockstep; spread them over the recruiting
         # window so this measures a lecture rather than a thundering herd that
         # never happens.
         await asyncio.sleep(args.arrival_seconds * index / max(1, args.students))
-        # The page first, as a phone does — the app has to be loadable before
-        # any of the API traffic below can happen at all.
-        if args.page_load:
-            await load_the_page(client, f"/s/{code}", recorder)
-        await recorder.timed(
-            "student login", lambda: sign_in_student(client, index, args.loadtest_key)
-        )
-        await recorder.timed(
-            "student state", lambda: client.get(f"/api/sessions/{code}/state")
-        )
+        async with arriving:
+            # The page first, as a phone does — the app has to be loadable
+            # before any of the API traffic below can happen at all.
+            if args.page_load:
+                await load_the_page(client, f"/s/{code}", recorder)
+            await recorder.timed(
+                "student login", lambda: sign_in_student(client, index, args.loadtest_key)
+            )
+            await recorder.timed(
+                "student state", lambda: client.get(f"/api/sessions/{code}/state")
+            )
+        # Outside the semaphore: the stream is held for the whole lecture, so
+        # counting it as "arriving" would stop anyone else ever arriving.
         streams.append(asyncio.create_task(hold_stream(client, code, recorder, stop)))
 
     await asyncio.gather(*(arrive(i, c) for i, c in enumerate(students)))
     await asyncio.sleep(0.5)
-    joined = (await teacher.get(f"/api/sessions/{code}/participants")).json()
-    print(f"joined {joined['joined']}, streams open {joined['connected']}")
+    try:
+        joined = (
+            await stubborn(lambda: teacher.get(f"/api/sessions/{code}/participants"))
+        ).json()
+        print(f"joined {joined['joined']}, streams open {joined['connected']}")
+    except Exception as e:  # noqa: BLE001 — informational; never worth the run
+        print(f"could not read the participant count: {e!r}", file=sys.stderr)
 
     # --- the bouts ---------------------------------------------------------
     for question in questions:
@@ -598,7 +654,10 @@ async def drive_the_lecture(
     await asyncio.gather(*streams, return_exceptions=True)
     await asyncio.gather(*(c.aclose() for c in students), return_exceptions=True)
 
-    health = await teacher.get("/api/health")
+    try:
+        health = await stubborn(lambda: teacher.get("/api/health"))
+    except Exception:  # noqa: BLE001 — the report below copes with not knowing
+        health = None
 
     report(recorder)
     checked_out = [r.get("checked_out") for r in pool_readings]
@@ -606,10 +665,11 @@ async def drive_the_lecture(
     live = [c for c in checked_out if c is not None]
     print(
         f"\ndb pool: peak {max(live, default=0)} of "
-        f"{health.json().get('db_pool', {}).get('size', '?')} checked out over "
+        f"{(health.json().get('db_pool', {}) if health is not None else {}).get('size', '?')} checked out over "
         f"{len(pool_readings)} samples; health unanswered {unreachable}x"
     )
-    print(f"health after the run: {json.dumps(health.json())[:250]}")
+    if health is not None:
+        print(f"health after the run: {json.dumps(health.json())[:250]}")
 
     failures = sum(1 for s in recorder.samples if s.failed)
     return 1 if failures else 0
@@ -669,6 +729,16 @@ def main() -> int:
         dest="purge",
         action="store_false",
         help="keep the session and its throwaway students afterwards",
+    )
+    parser.add_argument(
+        "--arrival-concurrency",
+        type=int,
+        default=25,
+        help=(
+            "how many students may be loading the page and signing in at once. "
+            "Bounds this machine's own sockets when the server slows down; "
+            "raise it to push harder, if the client can take it."
+        ),
     )
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
