@@ -168,9 +168,64 @@ def test_the_event_stream_is_not_counted_against_the_limit():
     nothing — the app would wedge itself solid partway through a class, which
     is a worse failure than the one the limit is there to prevent.
     """
-    assert main._holds_no_connection("/api/sessions/abc123/events")
-    assert main._holds_no_connection("/api/health")
-    assert not main._holds_no_connection("/api/sessions/abc123/answers")
+    assert not main.needs_the_database("/api/sessions/abc123/events")
+    assert not main.needs_the_database("/api/health")
+    assert main.needs_the_database("/api/sessions/abc123/answers")
+
+
+def test_the_page_itself_is_never_capped():
+    """The failure that shut a class out of the app.
+
+    The cap exists to protect the connection pool, so it may only cover
+    requests that take a connection. Written as "everything except a couple of
+    exemptions", it also covered the SPA's HTML and every built asset — and a
+    class arriving together is over a thousand of those before a single API
+    call. Students were refused the page, reloaded, and doubled the stampede.
+    """
+    for path in (
+        "/s/qs3yw2",  # the URL in the QR code
+        "/login",
+        "/",
+        "/main-466S722R.js",
+        "/chunk-B5Z6JVCU.js",
+        "/styles-ABCD1234.css",
+        "/favicon.ico",
+    ):
+        assert not main.needs_the_database(path), f"{path} must never queue for a connection"
+
+
+def test_the_spa_is_served_while_every_slot_is_taken(client, monkeypatch):
+    """Not just uncounted in principle — actually served with the cap full.
+
+    Checked end to end rather than by reading the predicate, because what
+    broke was the middleware's reach, not anyone's intent.
+    """
+    monkeypatch.setattr(main, "QUEUE_SECONDS", 0.01)
+    monkeypatch.setattr(main, "_slots", asyncio.Semaphore(0))  # nothing may in
+
+    # An API call is refused, as designed...
+    assert client.get("/api/auth/me").status_code == 503
+    # ...but the way into the app is not.
+    for path in ("/s/qs3yw2", "/login"):
+        assert client.get(path).status_code in (200, 404), (
+            f"{path} was blocked by the concurrency cap"
+        )
+
+
+def test_the_cap_can_be_switched_off_without_a_rebuild(monkeypatch, client):
+    """`REQUEST_SLOTS=0` in the volume's config file, and a restart.
+
+    This cap took the app down in front of a class once. A limit whose only
+    remedy is building and deploying a new image is one nobody can back out of
+    with students in the room, so it has to be reachable the way every other
+    setting on this deployment is — a line in the file on the volume.
+    """
+    from app.config import Settings
+
+    assert Settings(request_slots=0).request_slots == 0
+
+    monkeypatch.setattr(main, "_slots", None)
+    assert client.get("/api/auth/me").status_code in (200, 401)
 
 
 def test_answers_still_arrive_when_many_are_sent_at_once(teacher_client, make_client):

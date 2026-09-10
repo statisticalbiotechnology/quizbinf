@@ -183,20 +183,41 @@ quizbinf/
   connections here are file handles, and a pool smaller than the thread pool
   turns "busy" into "exhausted". `pool_timeout` is 10 s rather than 30, so a
   request that cannot be served fails while somebody is still watching.
-- **The app caps how many requests it lets in at once** (`REQUEST_SLOTS` in
-  `app/main.py`), sized *below* the connection pool so exhausting the pool is
-  not something that can happen — the queue forms at the door, where waiting
-  is all it does. A hall is not a steady load: nothing for four minutes, then
-  150 phones inside one second. Admitting all of them does not get the work
-  done faster; it only makes them starve each other, and requests that would
-  have succeeded a moment later fail instead. Only a queue still not moving
-  after `QUEUE_SECONDS` is refused, with **503 and `Retry-After`** — 503 says
-  "ask again", which is true and which the student view acts on by re-sending
-  the answer with a jittered backoff; a 500 says the server is broken and
-  invites nobody to retry. The SSE stream is exempt (it is open all lecture
-  and holds no connection, so counting it would wedge the app inside one
-  class), and so is `/api/health`, which has to answer *while* everything else
-  is queueing.
+- **The app caps how many *database-backed* requests it lets in at once**
+  (`REQUEST_SLOTS`), sized *below* the connection pool so exhausting the pool
+  is not something that can happen — the queue forms at the door, where
+  waiting is all it does. A hall is not a steady load: nothing for four
+  minutes, then 150 phones inside one second. Admitting all of them does not
+  get the work done faster; it only makes them starve each other. A queue
+  still not moving after `REQUEST_QUEUE_SECONDS` is refused with **503 and
+  `Retry-After`** — 503 says "ask again", which the student view acts on by
+  re-sending the answer with a jittered backoff; a 500 says the server is
+  broken and invites nobody to retry.
+- **What the cap covers is the whole of the rule, and it is `main.
+  needs_the_database()`.** Written the other way round — everything *except* a
+  couple of exemptions — it shut a live lecture out of the app entirely. One
+  student arriving loads the HTML, half a dozen fingerprinted JS chunks and a
+  favicon *before* a single API call, so 150 arriving together is over a
+  thousand requests that touch no database, all queueing for the same forty
+  slots. What got refused was the way in — `/s/<code>`, `/login`,
+  `/chunk-*.js`, `/favicon.ico` — so students could not load the app, reloaded,
+  and doubled the stampede. Serving a file off disk needs no connection and
+  must never wait for one. The two API exclusions are the SSE stream (open all
+  lecture, holds no connection, so counting it would wedge the app inside one
+  class) and `/api/health`, which has to answer *while* everything else is
+  queueing.
+- **The cap is configuration, not a constant.** `REQUEST_SLOTS=0` in the
+  volume's config file switches it off; `REQUEST_SLOTS` and
+  `REQUEST_QUEUE_SECONDS` retune it. A limit whose only remedy is building and
+  deploying a new image is one nobody can back out of with a class in the
+  room, and this one has already had to be.
+- **A shed request must say what is holding the slots, not how many there are
+  in theory.** The first version logged the `REQUEST_SLOTS` constant, so every
+  line read "40 already in flight" whatever was happening — when the cap did
+  take a lecture down, its own log could not say why, and the incident had to
+  be diagnosed from the list of requests it refused. It now logs the measured
+  in-flight count, and any database request holding a slot longer than
+  `SLOW_REQUEST_SECONDS` is logged with its path, duration and the pool stats.
 - **`GET /api/health` reports the connection pool and the journal mode.** The
   freeze is invisible from outside — requests stop being answered while health
   keeps saying ok, because it needs no database — so `checked_out` pinned at
@@ -481,6 +502,12 @@ URL so the QR code resolves. See the README.
   the middle of the burst**, which is the collision that prompted it. It
   reports latency percentiles per endpoint, every error, and the peak of the
   connection pool sampled from `/api/health` throughout.
+
+  Each student **loads the page first** — the HTML and the built assets it
+  references — because that is what a phone does and it is most of the traffic
+  a class generates. Leaving it out is how a concurrency cap that refused
+  those requests reached a real lecture: the harness drove only the API, so it
+  never saw the requests that actually broke.
 
   ```bash
   cd backend && python -m loadtest.lecture --base-url http://localhost:8000

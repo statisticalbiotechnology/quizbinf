@@ -3,6 +3,7 @@ import hashlib
 import logging
 import re
 import secrets
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -82,6 +83,12 @@ def log_startup_summary() -> None:
             "and a blank password would let any student claim to be a teacher."
         )
 
+    log.info(
+        "concurrency cap: %s",
+        f"{s.request_slots} database requests, {s.request_queue_seconds}s queue"
+        if s.request_slots > 0
+        else "OFF (REQUEST_SLOTS=0)",
+    )
     log.info("teacher usernames configured: %d", len(s.teachers))
     if not s.teachers:
         log.warning("no TEACHER_USERNAMES set: every user will be a student")
@@ -109,38 +116,58 @@ if settings.environment != "production":
         allow_headers=["*"],
     )
 
-#: How many requests may be in the app at once. Everything below the pool it
-#: draws connections from (`db.SQLITE_POOL_SIZE`), so running out of
-#: connections is not something that can happen: the queue forms here instead,
-#: where waiting is all it does. Roughly the size of the thread pool that runs
+#: How many *database-backed* requests may be in the app at once. Below the
+#: pool they draw from (`db.SQLITE_POOL_SIZE`), so running out of connections
+#: is not something that can happen: the queue forms here instead, where
+#: waiting is all it does. Roughly the size of the thread pool that runs
 #: synchronous endpoints, since that is how much work can actually proceed.
-REQUEST_SLOTS = 40
+#:
+#: Configurable, and `REQUEST_SLOTS=0` turns the cap off. A limit that can
+#: only be changed by rebuilding an image is a limit nobody can back out of
+#: with a class in the room, and this one has already needed backing out of.
+REQUEST_SLOTS = settings.request_slots
 
-#: How long a request waits for a slot before being turned away. Long enough to
-#: ride out the few seconds when a whole class submits at once; short enough
-#: that the answer is "busy, try again" while the student is still holding the
-#: phone, rather than a spinner that outlives the submission window.
-QUEUE_SECONDS = 20
+#: How long such a request waits for a slot before being turned away. Short:
+#: a student who has waited this long has already reloaded the page, so a
+#: longer wait buys nothing and costs a slot the whole time. The student view
+#: re-sends a shed answer on its own.
+QUEUE_SECONDS = settings.request_queue_seconds
 
-_slots = asyncio.Semaphore(REQUEST_SLOTS)
+_slots = asyncio.Semaphore(REQUEST_SLOTS) if REQUEST_SLOTS > 0 else None
+_in_flight = 0  # for the log line only — the semaphore is the actual limit
 
 
-def _holds_no_connection(path: str) -> bool:
-    """Requests that must not take a slot.
+def needs_the_database(path: str) -> bool:
+    """Whether this request should be counted against `REQUEST_SLOTS`.
 
-    The SSE stream is open for the whole lecture and deliberately holds no
-    database connection while it runs, so counting it would use up every slot
-    within one class and wedge the app completely. `/api/health` is exempt for
-    the opposite reason: it is the endpoint that has to answer *while*
-    everything else is queueing, which is when someone is trying to find out
-    what is wrong.
+    Only API calls that take a database connection, and this is the whole of
+    the rule — a cap in front of anything else does harm and no good.
+
+    It was written the other way round first, as "everything except a couple
+    of exemptions", and that shut a lecture out of the app completely. One
+    student arriving loads the HTML, half a dozen fingerprinted JS chunks and
+    a favicon before a single API call: 150 of them arriving together is well
+    over a thousand requests, none of which touch the database, all of which
+    were queueing for the same forty slots. What got refused was the page
+    itself — `/s/<code>`, `/login`, `/chunk-*.js` — so students could not load
+    the app at all, reloaded, and doubled the stampede. Serving a file off
+    disk needs no connection and must never wait for one.
+
+    Two API paths are excluded as well. The SSE stream is open for the whole
+    lecture and deliberately holds no connection while it runs, so counting it
+    would spend the entire allowance on idle streams within one class.
+    `/api/health` is excluded for the opposite reason: it is the endpoint that
+    has to answer *while* everything else is queueing, which is exactly when
+    somebody is trying to find out what is wrong.
     """
-    return path.endswith("/events") or path == "/api/health"
+    if not path.startswith("/api/"):
+        return False  # the SPA's own HTML, and every built asset
+    return not (path.endswith("/events") or path == "/api/health")
 
 
 @app.middleware("http")
 async def limit_concurrency(request: Request, call_next):
-    """Cap how much of the app is in flight at once.
+    """Cap how many database-backed requests are in flight at once.
 
     A lecture hall is not a steady load: nothing happens for four minutes and
     then 150 phones submit inside the same second. Without a cap, every one of
@@ -150,26 +177,56 @@ async def limit_concurrency(request: Request, call_next):
     done faster for having been let in; it only fails.
 
     With a cap the same burst is served at the same rate and simply queues,
-    which is the behaviour a small machine should have. Only a queue that is
-    still not moving after `QUEUE_SECONDS` is refused, and it is refused
-    honestly — 503 with `Retry-After`, which says "ask again", where a 500 says
-    "something is broken" and invites nobody to retry.
+    which is the behaviour a small machine should have. A queue still not
+    moving after `QUEUE_SECONDS` is refused honestly — 503 with `Retry-After`,
+    which says "ask again", where a 500 says "something is broken" and invites
+    nobody to retry.
     """
-    if _holds_no_connection(request.url.path):
+    global _in_flight
+
+    if _slots is None or not needs_the_database(request.url.path):
         return await call_next(request)
     try:
         await asyncio.wait_for(_slots.acquire(), timeout=QUEUE_SECONDS)
     except (asyncio.TimeoutError, TimeoutError):
-        log.warning("shed a request for %s: %d already in flight", request.url.path, REQUEST_SLOTS)
+        # The real count, not `REQUEST_SLOTS`. The first version logged the
+        # constant, so every line read "40 already in flight" whatever was
+        # actually happening — and when this cap did take a lecture down, the
+        # log it produced could not say what was holding the slots. Report
+        # what is measured, and see the slow-request line below for what is
+        # holding them.
+        log.warning(
+            "shed %s: %d/%d database requests in flight after waiting %ss",
+            request.url.path,
+            _in_flight,
+            REQUEST_SLOTS,
+            QUEUE_SECONDS,
+        )
         return JSONResponse(
             {"detail": "The server is busy. Please try again."},
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             headers={"Retry-After": "1"},
         )
+    _in_flight += 1
+    started = time.perf_counter()
     try:
         return await call_next(request)
     finally:
+        held = time.perf_counter() - started
+        _in_flight -= 1
         _slots.release()
+        if held > settings.slow_request_seconds:
+            # Name the request that is occupying the cap. Without this the
+            # only evidence of saturation is the list of requests it refused,
+            # which says nothing about the cause.
+            log.warning(
+                "slow: %s %s held a slot for %.1fs (%d in flight, pool %s)",
+                request.method,
+                request.url.path,
+                held,
+                _in_flight,
+                pool_stats(),
+            )
 
 
 @app.middleware("http")

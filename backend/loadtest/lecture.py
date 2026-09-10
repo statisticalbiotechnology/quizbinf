@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import statistics
 import sys
 import time
@@ -135,6 +136,36 @@ async def watch_health(client: httpx.AsyncClient, stop: asyncio.Event, seen: lis
         except Exception:  # noqa: BLE001 — health being unreachable is itself data
             seen.append({"checked_out": None})
         await asyncio.sleep(0.25)
+
+
+#: `src="…"` / `href="…"` of the built assets an Angular page pulls in.
+ASSET_REF = re.compile(r'(?:src|href)="(/[^"]+\.(?:js|css|ico|png|woff2?))"')
+
+
+async def load_the_page(
+    client: httpx.AsyncClient, path: str, recorder: Recorder
+) -> None:
+    """Fetch a page the way a phone does: the HTML, then what it references.
+
+    Not decoration. A student's first act is to load the app, and that is the
+    HTML plus half a dozen fingerprinted chunks and a favicon *before* any API
+    call — so a class arriving together is over a thousand requests that touch
+    no database at all. Driving only the API missed that completely, and a
+    concurrency cap that covered these requests as well shut a real lecture
+    out of the app: students were refused the page, reloaded, and doubled the
+    stampede. Whatever guards the app has, this is the traffic they meet
+    first.
+    """
+    page = await recorder.timed("page html", lambda: client.get(path))
+    if page is None or page.status_code >= 400:
+        return
+    assets = sorted(set(ASSET_REF.findall(page.text)) | {"/favicon.ico"})
+    await asyncio.gather(
+        *[
+            recorder.timed("page asset", lambda a=asset: client.get(a))
+            for asset in assets
+        ]
+    )
 
 
 async def login(client: httpx.AsyncClient, username: str) -> httpx.Response:
@@ -252,6 +283,10 @@ async def run(args: argparse.Namespace) -> int:
         # window so this measures a lecture rather than a thundering herd that
         # never happens.
         await asyncio.sleep(args.arrival_seconds * index / max(1, args.students))
+        # The page first, as a phone does — the app has to be loadable before
+        # any of the API traffic below can happen at all.
+        if args.page_load:
+            await load_the_page(client, f"/s/{code}", recorder)
         await recorder.timed("student login", lambda: login(client, f"loadstudent{index:03d}"))
         await recorder.timed(
             "student state", lambda: client.get(f"/api/sessions/{code}/state")
@@ -369,6 +404,12 @@ def main() -> int:
         dest="refresh_mid_burst",
         action="store_false",
         help="leave out the teacher refresh that made this app slow in class",
+    )
+    parser.add_argument(
+        "--no-page-load",
+        dest="page_load",
+        action="store_false",
+        help="skip the HTML and built assets; drive only the API",
     )
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
