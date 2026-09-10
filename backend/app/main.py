@@ -9,11 +9,13 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import FileResponse, JSONResponse
 
-from .auth import RENEW_FLAG, set_session_cookie
+from .auth import RENEW_FLAG, passwords_match, set_session_cookie
 from .config import VOLUME_ENV_FILE, get_settings
 from .db import Base, engine, journal_mode, pool_stats
+from .diagnostics import dump_threads, storage_report
 from .routers import auth, backup, images, markdown, quizzes, reports, roster, sessions
 
 log = logging.getLogger("quizbinf")
@@ -136,6 +138,32 @@ QUEUE_SECONDS = settings.request_queue_seconds
 _slots = asyncio.Semaphore(REQUEST_SLOTS) if REQUEST_SLOTS > 0 else None
 _in_flight = 0  # for the log line only — the semaphore is the actual limit
 
+#: Not more than one thread dump per this many seconds. A wedged app sheds
+#: hundreds of requests a minute and each would otherwise ask for a dump.
+STALL_DUMP_INTERVAL = 120
+_last_dump = 0.0
+
+
+def _dump_threads_once(reason: str) -> None:
+    """Record where the threads are, the first time things stop moving.
+
+    A duration says a request took 728 seconds; only a stack says whether it
+    was parked in `os.fsync`, inside SQLite, or in this application — and that
+    difference decides whether the next fix belongs in the app at all. Doing
+    it automatically matters more than it sounds: the state lasts until
+    somebody restarts, and asking a teacher to catch it live and run a command
+    is asking for the evidence to be lost.
+    """
+    global _last_dump
+    now = time.monotonic()
+    if now - _last_dump < STALL_DUMP_INTERVAL:
+        return
+    _last_dump = now
+    try:
+        dump_threads(reason)
+    except Exception as e:  # noqa: BLE001 — diagnosing must never be the fault
+        log.warning("could not dump threads: %r", e)
+
 
 def needs_the_database(path: str) -> bool:
     """Whether this request should be counted against `REQUEST_SLOTS`.
@@ -162,7 +190,7 @@ def needs_the_database(path: str) -> bool:
     """
     if not path.startswith("/api/"):
         return False  # the SPA's own HTML, and every built asset
-    return not (path.endswith("/events") or path == "/api/health")
+    return not (path.endswith("/events") or path.startswith("/api/health"))
 
 
 @app.middleware("http")
@@ -201,6 +229,9 @@ async def limit_concurrency(request: Request, call_next):
             _in_flight,
             REQUEST_SLOTS,
             QUEUE_SECONDS,
+        )
+        _dump_threads_once(
+            f"{REQUEST_SLOTS} database requests in flight; {request.url.path} shed"
         )
         return JSONResponse(
             {"detail": "The server is busy. Please try again."},
@@ -298,6 +329,43 @@ async def health() -> dict:
         # `size` and staying there is that failure, visible from a phone.
         "db_pool": pool_stats(),
         "journal_mode": journal_mode(),
+    }
+
+
+@app.get("/api/health/storage", include_in_schema=False)
+async def health_storage(key: str = "") -> dict:
+    """Time the volume and SQLite's state on it, and dump every thread's stack.
+
+    For the failure the concurrency work could not explain: a single request
+    taking 31 seconds with one other in flight, and 59 seconds with none.
+    There is no queue in that, so the answer is below the application — and
+    the app had no way to say anything about the layer it sits on.
+
+    Unauthenticated by necessity, key-gated by design: checking a login means
+    reading the users table, which is the thing suspected of being slow, so an
+    endpoint that authenticates cannot report on a database that will not
+    answer. It returns timings, file sizes and stack frames — nothing from any
+    table, no configuration values.
+
+    Runs in a thread (`run_in_threadpool`) because it deliberately blocks on
+    the disk, and blocking the event loop to find out why things are blocked
+    would be its own joke.
+    """
+    settings = get_settings()
+    if not settings.diagnostics_allowed:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Diagnostics are off. Set DIAGNOSTICS_KEY in the volume's config file.",
+        )
+    if not passwords_match(key, settings.diagnostics_key):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong diagnostics key")
+
+    _dump_threads_once("requested via /api/health/storage")
+    return {
+        "instance": INSTANCE_ID,
+        "db_pool": pool_stats(),
+        "storage": await run_in_threadpool(storage_report, settings),
+        "note": "thread stacks are in the application log, not in this reply",
     }
 
 

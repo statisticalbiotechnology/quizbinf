@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     # without anyone having to intervene; a lecture fits comfortably inside it.
     device_binding_hours: int = 12
 
+    # Reading the storage probe and the thread dump at /api/health/storage.
+    # A separate key from LOADTEST_KEY on purpose: that one is set for a
+    # rehearsal and taken out afterwards, and this is most wanted during an
+    # incident nobody planned. Empty means the endpoint is off.
+    diagnostics_key: str = ""
+
     # Rehearsing a lecture against this deployment. Empty means off, and off
     # is the default: with no key set there is no way in but the real login.
     #
@@ -156,6 +162,10 @@ class Settings(BaseSettings):
     @property
     def mock_login_allowed(self) -> bool:
         return self.mock_login and self.environment != "production"
+
+    @property
+    def diagnostics_allowed(self) -> bool:
+        return len(self.diagnostics_key) >= 24
 
     @property
     def loadtest_allowed(self) -> bool:
