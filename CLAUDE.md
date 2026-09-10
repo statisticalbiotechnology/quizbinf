@@ -213,11 +213,17 @@ quizbinf/
   time out is **503 with `Retry-After`**, not the 500 that `database is
   locked` produced.
 
-  `record_participant` is the one deliberate exception, and the comment on it
-  explains why: it runs on `/state` and on every SSE connect, and the throttle
-  means it writes on almost none of them. Declaring it a writer would put the
-  busiest path in the app back behind the write lock. It reads first, outside
-  the lock, and asks for the lock only when it has something to write.
+  **A path that usually has nothing to write must not declare itself a
+  writer.** Two do this, and both comments say why. `record_participant` runs
+  on `/state` and on every SSE connect while the throttle means it writes on
+  almost none of them. `get_or_create_user` is every student's arrival, and
+  writing unconditionally — re-setting `role` to the value it already held —
+  cost a lecture: **185 of 200 logins refused** after the full
+  `WRITE_QUEUE_SECONDS`, 8 students in the session, and the connection pool
+  idle at 15 of 50. Nothing was contended except a lock taken for no reason.
+  Both now read first, outside the lock, and take it only when there is
+  genuinely something to write — re-reading inside the write transaction,
+  because the row may have appeared in between.
 
   Missing a write path is the failure this is all about, so `db.py` notices
   one: an INSERT/UPDATE/DELETE outside `writing()` logs a warning in
@@ -259,9 +265,13 @@ quizbinf/
   lecture, holds no connection, so counting it would wedge the app inside one
   class) and `/api/health`, which has to answer *while* everything else is
   queueing.
-- **The cap is configuration, not a constant.** `REQUEST_SLOTS=0` in the
-  volume's config file switches it off; `REQUEST_SLOTS` and
-  `REQUEST_QUEUE_SECONDS` retune it. A limit whose only remedy is building and
+- **The cap is configuration, not a constant** — and so is the write queue's
+  timeout. `REQUEST_SLOTS=0` in the volume's config file switches the cap off;
+  `REQUEST_SLOTS` and `REQUEST_QUEUE_SECONDS` retune it, and
+  `WRITE_QUEUE_SECONDS` retunes how long a request waits for the right to
+  write. That last one is the app's hardest limit, since SQLite takes one
+  writer at a time, and it is the one most likely to bite in front of a
+  class. A limit whose only remedy is building and
   deploying a new image is one nobody can back out of with a class in the
   room, and this one has already had to be.
 - **A shed request must say what is holding the slots, not how many there are
@@ -633,6 +643,33 @@ URL so the QR code resolves. See the README.
   on a new host, and the values are all obtainable again. If a
   restore-everything-including-credentials bundle is ever wanted, it needs to
   be a deliberate, separately-argued opt-in.
+
+  **A damaged database is the case the backup exists for, so it must not be
+  the case the backup refuses.** `VACUUM INTO` reads every page, which makes
+  it the first thing to fail on a corrupt file — and the deployment did
+  corrupt, answering `database disk image is malformed` while its real lecture
+  data was still readable. The endpoint whose whole purpose is rescue produced
+  nothing. It now falls back to a **raw byte copy plus the `-wal`** (under WAL
+  the recent commits are in the log, and a copy without it loses them
+  silently), and the README in the archive says which of the two kinds it is
+  and gives the `sqlite3 .recover` incantation. `tests/
+  test_corrupt_database.py` damages a database on purpose and pins both.
+
+  **`GET /api/health/storage` reports `integrity`.** The corruption presented
+  as fast 500s on some logins and not others, with the *same* count of them
+  across two separate runs — which is a damaged page, not contention, and
+  three rounds of concurrency work were spent explaining it as contention. A
+  slow volume, an exhausted pool and a broken file are indistinguishable from
+  a latency column; nothing the app exposed could tell them apart. Take a
+  backup and check it (`PRAGMA integrity_check`) when you take it, not when
+  you need it.
+
+  **SQLite's locking is unreliable on a network filesystem, and WAL does not
+  work on one at all** — it needs real shared memory for the `-shm` file. If
+  the volume is network-backed, corruption is the expected outcome rather than
+  bad luck, and no amount of tuning inside the app substitutes for moving the
+  database. Establish what the storage class actually is before concluding
+  anything else about a corrupt file.
 
   The snapshot is written under a random filename rather than `quizbinf.db`:
   `VACUUM INTO` refuses to overwrite, so naming it after its source breaks the

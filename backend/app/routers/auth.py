@@ -104,15 +104,23 @@ def loadtest_login(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong load-test key")
 
     username = LOADTEST_PREFIX + body.name
-    with writing(db):
-        user = db.scalar(select(User).where(User.username == username))
-        if user is None:
-            user = User(username=username, display_name=username, role=Role.student)
-            db.add(user)
-        # Never promoted, whatever the allowlist says — see the docstring.
-        user.role = Role.student
+    user = db.scalar(select(User).where(User.username == username))
+    if user is None or user.role != Role.student:
+        db.commit()  # a deferred transaction cannot be promoted; close it first
+        with writing(db):
+            user = db.scalar(select(User).where(User.username == username))
+            if user is None:
+                user = User(username=username, display_name=username, role=Role.student)
+                db.add(user)
+            # Never promoted, whatever the allowlist says — see the docstring.
+            user.role = Role.student
+            db.commit()
+    else:
+        # Already correct, so this rehearsal login is a read. It matters here
+        # for the same reason it matters in `get_or_create_user`: this is the
+        # endpoint two hundred simulated students hit at once, and a needless
+        # write apiece is what the load test would then be measuring.
         db.commit()
-        db.refresh(user)
     set_session_cookie(response, user.username, settings)
     return user
 

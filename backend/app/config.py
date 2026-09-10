@@ -124,6 +124,14 @@ class Settings(BaseSettings):
     # entirely, or raise it, and restart.
     request_slots: int = 40
     request_queue_seconds: float = 5.0
+
+    #: How long a request queues for the right to *write* before it is
+    #: refused with 503. Configuration rather than a constant for the reason
+    #: `request_slots` is: SQLite takes one writer at a time, so this is the
+    #: app's hardest limit, and the first time it bites will be in front of a
+    #: class. Raising it in the volume's config file and restarting is
+    #: something a teacher can do; building and deploying an image is not.
+    write_queue_seconds: float = 5.0
     # A database request that holds its slot longer than this is logged with
     # its path. Whatever saturates the cap is then named in the log instead of
     # having to be guessed at afterwards from the requests it turned away.

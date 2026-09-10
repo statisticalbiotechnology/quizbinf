@@ -465,7 +465,12 @@ def test_a_writer_that_cannot_get_a_turn_says_busy_rather_than_broken(monkeypatc
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    monkeypatch.setattr(db_module, "WRITE_QUEUE_SECONDS", 0.1)
+    # The setting, not the module constant: the timeout is read from
+    # configuration at each call so it can be retuned on a deployment without
+    # a rebuild. Patching the constant here passed anyway — by waiting the
+    # full five seconds — which is a test agreeing with itself rather than
+    # with the code.
+    monkeypatch.setattr(get_settings(), "write_queue_seconds", 0.1)
 
     probe = FastAPI()
     probe.add_exception_handler(WriteQueueTimeout, main.write_queue_timeout)
@@ -608,3 +613,78 @@ def test_health_reports_the_write_queue(client):
     queue = client.get("/api/health").json()["write_queue"]
     assert queue["waiting"] == 0
     assert queue["longest_wait"] >= 0
+
+
+def test_a_returning_student_signs_in_without_the_write_lock(client, make_client):
+    """The most expensive needless write in the app, and the one that hurts most.
+
+    Every student's arrival goes through the login path, so a class arriving
+    together is 150 calls inside a few seconds. Writing unconditionally — even
+    re-setting `role` to the value it already held — made every one of them
+    queue for the process-wide write lock. Against the deployment: 185 of 200
+    logins refused after the full `WRITE_QUEUE_SECONDS`, 8 students in the
+    session, and the connection pool idle at 15 of 50. Nothing was contended
+    except a lock taken for no reason.
+
+    The first login of a name creates a row and must write. Every login after
+    that has nothing to write, and must not queue behind anybody.
+    """
+    seen = []
+    original = db_module.writing
+
+    def watched(db):
+        seen.append(True)
+        return original(db)
+
+    login(client, "returning")  # creates the row — this one may write
+
+    import app.auth as auth_module
+
+    db_module.writing = watched
+    auth_module.writing = watched
+    try:
+        again = make_client()
+        login(again, "returning")
+    finally:
+        db_module.writing = original
+        auth_module.writing = original
+
+    assert not seen, "a returning student's login asked for the write lock"
+    assert again.get("/api/auth/me").json()["username"] == "returning"
+
+
+def test_a_changed_role_is_still_written(monkeypatch, client, make_client):
+    """The saving above must not become a correctness bug.
+
+    The teacher allowlist in configuration is authoritative on every login —
+    promoting somebody by adding them to `TEACHER_USERNAMES` has to take
+    effect the next time they sign in, which means the skip has to notice that
+    the stored row no longer matches.
+    """
+    login(client, "promoted")
+    assert client.get("/api/auth/me").json()["role"] == "student"
+
+    settings = get_settings()
+    monkeypatch.setattr(
+        settings, "teacher_usernames", settings.teacher_usernames + ",promoted"
+    )
+
+    after = make_client()
+    login(after, "promoted")
+    assert after.get("/api/auth/me").json()["role"] == "teacher"
+
+
+def test_the_write_timeout_can_be_retuned_without_a_rebuild(monkeypatch):
+    """SQLite's one-writer limit is the app's hardest, so its timeout is
+    configuration.
+
+    The request cap already learned this: a limit whose only remedy is
+    building and deploying a new image is one nobody can back out of with a
+    class in the room, and that cap had to be backed out of exactly once. The
+    write queue is the same shape of thing and reaches its ceiling sooner —
+    `WRITE_QUEUE_SECONDS` in the volume's config file, and a restart.
+    """
+    settings = get_settings()
+    assert db_module._write_timeout() == settings.write_queue_seconds
+    monkeypatch.setattr(settings, "write_queue_seconds", 12.5)
+    assert db_module._write_timeout() == 12.5
