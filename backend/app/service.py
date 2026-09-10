@@ -9,7 +9,7 @@ import random
 from collections.abc import Iterable
 from datetime import date, datetime, time, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -164,43 +164,77 @@ def delete_loadtest_session(db: Session, session: QuizSession) -> dict:
     Callers must have established that this is a load-test session — the
     router does, and refuses otherwise. Nothing else in the app deletes a
     session, deliberately.
-    """
-    rounds = list(session.rounds)
-    answers = sum(len(r.answers) for r in rounds)
 
-    participants = list(
+    Written as a handful of set-based statements rather than a loop over two
+    hundred ORM objects. The loop was correct and unusable: it issued roughly
+    six hundred statements, and this runs against a deployment where a single
+    indexed query has been measured at thirty seconds with nothing else in
+    flight. Cleaning up after a rehearsal must not itself need a healthy
+    server — it is most needed when the server is not.
+    """
+    round_ids = list(db.scalars(select(Round.id).where(Round.session_id == session.id)))
+    answers = (
+        db.scalar(
+            select(func.count()).select_from(Answer).where(Answer.round_id.in_(round_ids))
+        )
+        or 0
+        if round_ids
+        else 0
+    )
+
+    # The throwaway students to remove: those with no answer left anywhere
+    # once this session's are gone. A rehearsal account cannot appear in a
+    # real lecture, but this costs one statement and removes the need for
+    # that to stay true.
+    doomed = list(
         db.scalars(
-            select(SessionParticipant).where(SessionParticipant.session_id == session.id)
+            select(User.id).where(
+                User.username.startswith(LOADTEST_PREFIX),
+                ~User.id.in_(
+                    select(Answer.user_id)
+                    .join(Round, Round.id == Answer.round_id)
+                    .where(Round.session_id != session.id)
+                ),
+            )
         )
     )
-    for participant in participants:
-        db.delete(participant)
-    # The rounds cascade to their answers, so this must happen before the
-    # orphan check below finds those students still holding one.
-    db.delete(session)
-    db.flush()
-
-    # The throwaway students, but only those with nothing left anywhere. A
-    # rehearsal account cannot appear in a real lecture, but checking costs
-    # one query and removes the need for that to stay true.
-    users = 0
-    for user in db.scalars(select(User).where(User.username.startswith(LOADTEST_PREFIX))):
-        still_answering = db.scalar(
-            select(func.count()).select_from(Answer).where(Answer.user_id == user.id)
+    participants = (
+        db.scalar(
+            select(func.count())
+            .select_from(SessionParticipant)
+            .where(SessionParticipant.session_id == session.id)
         )
-        if still_answering:
-            continue
-        for claim in db.scalars(select(DeviceClaim).where(DeviceClaim.username == user.username)):
-            db.delete(claim)
-        db.delete(user)
-        users += 1
+        or 0
+    )
 
+    if round_ids:
+        db.execute(delete(Answer).where(Answer.round_id.in_(round_ids)))
+        db.execute(delete(Round).where(Round.id.in_(round_ids)))
+    db.execute(
+        delete(SessionParticipant).where(SessionParticipant.session_id == session.id)
+    )
+    if doomed:
+        # Every participant row these users have, not merely this session's: a
+        # rehearsal that crashed and was re-run leaves the same names in more
+        # than one session, and deleting the user while a row still pointed at
+        # them left a participant belonging to nobody — the shape of the bug
+        # where a deleted question's rounds outlived it and made the
+        # participation report raise instead of render.
+        db.execute(delete(SessionParticipant).where(SessionParticipant.user_id.in_(doomed)))
+        db.execute(
+            delete(DeviceClaim).where(
+                DeviceClaim.username.in_(select(User.username).where(User.id.in_(doomed)))
+            )
+        )
+        db.execute(delete(User).where(User.id.in_(doomed)))
+    db.execute(delete(QuizSession).where(QuizSession.id == session.id))
     db.commit()
+
     return {
-        "rounds": len(rounds),
+        "rounds": len(round_ids),
         "answers": answers,
-        "participants": len(participants),
-        "users": users,
+        "participants": participants,
+        "users": len(doomed),
     }
 
 
