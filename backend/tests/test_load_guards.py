@@ -126,17 +126,19 @@ def test_health_answers_without_touching_the_database(client):
     needed a connection it would be the first casualty of the failure it
     exists to diagnose — which is why the journal mode it reports is read once
     at startup and cached.
+
+    The pool is exhausted with *raw* connections rather than by running a
+    query on each. Since `BEGIN IMMEDIATE`, a query starts a write
+    transaction, and sixty of those cannot coexist by design — the earlier
+    version of this test held sixty read transactions open, which was legal
+    then and is a sixty-deep queue now. Checking a connection out without
+    using it still empties the pool, which is the condition under test.
     """
-    # Hold every connection the pool can give out — overflow included, or the
-    # pool is merely busy and this proves nothing — exactly as a stuck app
-    # does. Anything that needs the database now blocks for `pool_timeout`.
     capacity = engine.pool.size() + engine.pool._max_overflow
     held = []
     try:
         while len(held) < capacity:
-            session = SessionLocal()
-            session.execute(text("SELECT 1"))
-            held.append(session)
+            held.append(engine.raw_connection())
         assert engine.pool.checkedout() == capacity
 
         response = client.get("/api/health")
@@ -147,8 +149,58 @@ def test_health_answers_without_touching_the_database(client):
             "health must report the exhaustion it is being asked about"
         )
     finally:
-        for session in held:
-            session.close()
+        for connection in held:
+            connection.close()
+
+
+def test_a_read_then_write_does_not_fail_instantly(teacher_client, make_client):
+    """The failure that took a lecture down, and it is not about speed.
+
+    Every endpoint here reads before it writes. SQLAlchemy opens that as a
+    deferred transaction — a reader asking to become a writer at the first
+    INSERT — and if another connection has committed in between, SQLite
+    refuses *immediately*, without consulting `busy_timeout`, because waiting
+    could deadlock. On the deployment 152 of 200 concurrent logins died that
+    way, each in about 19 ms, and each one was a student who could not sign
+    in. It never showed up locally, where the window between the read and the
+    write is 0.02 ms rather than the 6 ms a mounted volume costs.
+
+    `BEGIN IMMEDIATE` is what makes concurrent writers queue instead of fail.
+    This drives the same shape through the app: many clients reading and then
+    writing at once, all of which must succeed.
+    """
+    import concurrent.futures
+
+    quiz_id, question_id, choice_ids = make_quiz_with_question(teacher_client)
+    code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
+    teacher_client.post(
+        f"/api/sessions/{code}/rounds", json={"question_id": question_id, "phase": "pre"}
+    )
+
+    students = []
+    for i in range(16):
+        student = make_client()
+        login(student, f"racer{i}")
+        students.append(student)
+
+    def read_then_write(pair):
+        index, student = pair
+        # `/state` reads and records the participant; the answer reads the
+        # open round and writes. Both are the read-then-write shape.
+        student.get(f"/api/sessions/{code}/state")
+        return student.post(
+            f"/api/sessions/{code}/answers",
+            json={"choice_id": choice_ids[index % len(choice_ids)]},
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        results = list(pool.map(read_then_write, enumerate(students)))
+
+    failed = [r for r in results if r.status_code != 200]
+    assert not failed, (
+        f"{len(failed)} of {len(results)} lost the read-to-write upgrade: "
+        f"{[r.text[:80] for r in failed[:3]]}"
+    )
 
 
 def test_health_reports_the_pool_so_a_freeze_can_be_seen(client):

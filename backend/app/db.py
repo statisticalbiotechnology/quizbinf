@@ -45,11 +45,49 @@ def _make_engine():
     kwargs = {"pool_timeout": POOL_TIMEOUT}
     sqlite = url.startswith("sqlite")
     if sqlite:
-        kwargs["connect_args"] = {"check_same_thread": False}
+        # `isolation_level=None` turns off pysqlite's implicit transaction
+        # handling, so the `begin` handler below is what starts a transaction
+        # rather than the driver silently emitting a plain BEGIN of its own.
+        kwargs["connect_args"] = {"check_same_thread": False, "isolation_level": None}
         kwargs["pool_size"] = SQLITE_POOL_SIZE
         kwargs["max_overflow"] = 10
     engine = create_engine(url, **kwargs)
     if sqlite:
+
+        @event.listens_for(engine, "begin")
+        def _begin_immediate(connection):
+            """Take SQLite's write lock when a transaction starts, not when it
+            first writes.
+
+            This is the fix for the failure that took a lecture down, and it
+            is not a tuning knob — it is the difference between waiting and
+            failing.
+
+            Every endpoint here reads before it writes: find the user then
+            insert one, find the answer then update it, find the participant
+            then record them. SQLAlchemy opens that as a *deferred*
+            transaction, which begins as a reader and asks to become a writer
+            at the first INSERT. If any other connection has committed in
+            between, SQLite refuses — and refuses **immediately**, without
+            consulting `busy_timeout`, because waiting there could deadlock.
+            The application sees `database is locked` in under a millisecond
+            no matter how patient it was told to be, and returns a 500.
+
+            Measured on the deployment: 152 of 200 concurrent logins failed
+            that way, each in about 19 ms. It never appeared in local testing
+            because the window is the time between the read and the write —
+            0.02 ms against a local disk, 6 ms against the mounted volume, so
+            three hundred times more likely to be lost there.
+
+            `BEGIN IMMEDIATE` takes the write lock up front. Concurrent
+            writers then queue on the busy handler for up to
+            `SQLITE_BUSY_TIMEOUT_MS` instead of failing, which is the
+            behaviour every caller already assumed. The cost is that
+            read-only transactions serialise too; at this app's size — a few
+            hundred writes in a lecture, each a few milliseconds — that is a
+            price worth paying for not losing a student's answer.
+            """
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
 
         @event.listens_for(engine, "connect")
         def _sqlite_pragmas(connection, _record):  # pragma: no cover - trivial
