@@ -183,6 +183,59 @@ quizbinf/
   connections here are file handles, and a pool smaller than the thread pool
   turns "busy" into "exhausted". `pool_timeout` is 10 s rather than 30, so a
   request that cannot be served fails while somebody is still watching.
+- **A transaction is a reader or a writer, and it must say which.** SQLite
+  allows one writer at a time, and both halves of this were learned the hard
+  way, one load test each.
+
+  A **writer** must open with `BEGIN IMMEDIATE`. Every write path here reads
+  first — find the user then insert one, find the answer then update it — and
+  SQLAlchemy opens that as a *deferred* transaction, a reader asking to become
+  a writer at the first INSERT. If another connection committed in between,
+  SQLite refuses **immediately**, without consulting `busy_timeout`, because
+  waiting there could deadlock. On the deployment that was 152 of 200
+  concurrent logins failing in about 19 ms each. It never reproduced locally
+  because the vulnerable window is the gap between the read and the write:
+  0.02 ms against a local disk, 6 ms against the mounted volume.
+
+  A **reader** must not. The first fix made *every* transaction immediate,
+  including the SELECT `current_user` does on the way into every request — so
+  the whole app serialised behind a lock only one request could hold. The next
+  load test: 350 answers shed with 503, the request cap saturated at 40 in
+  flight over a connection pool sitting almost idle at 41 of 50, and 41 of 200
+  students able to join at all. **A saturated cap over an idle pool is that
+  signature** — requests waiting for each other, not for the database.
+
+  So write paths declare themselves: `@write_path` on a service function, or
+  `with writing(db)` around a read-then-write sequence. `writing()` queues in
+  the process rather than inside SQLite, because `busy_timeout` is not a queue
+  — a blocked writer sleeps and retries, so with forty contenders the winner
+  is whoever wakes at the right moment, and the rest starve. A wait that does
+  time out is **503 with `Retry-After`**, not the 500 that `database is
+  locked` produced.
+
+  `record_participant` is the one deliberate exception, and the comment on it
+  explains why: it runs on `/state` and on every SSE connect, and the throttle
+  means it writes on almost none of them. Declaring it a writer would put the
+  busiest path in the app back behind the write lock. It reads first, outside
+  the lock, and asks for the lock only when it has something to write.
+
+  Missing a write path is the failure this is all about, so `db.py` notices
+  one: an INSERT/UPDATE/DELETE outside `writing()` logs a warning in
+  production and **raises in the test suite** (`conftest.py` swaps the
+  handler), which makes every test in the repository also an assertion that
+  its write paths are declared. It logs rather than raises in production
+  because a missed path that logs is a rare 500 under load, while one that
+  raises is a feature that never works at all, discovered in front of a class.
+- **`GET /api/health` says which build is running** (`code`, a hash of the
+  app's own source) **and how deep the write queue is** (`write_queue`). Both
+  exist because of how long the two failures above took to tell apart. Without
+  the first, "the fix did not work" and "the fix was never deployed" are the
+  same reading; get the expected value for a checkout with `python -c "from
+  app.main import _code_fingerprint; print(_code_fingerprint())"`. Without the
+  second, writers queueing for each other looks exactly like the pool
+  exhaustion that came before it. `waiting` above zero under load is this
+  app's remaining hard limit — one writer at a time — and it is the one a
+  bigger machine does not raise.
 - **The app caps how many *database-backed* requests it lets in at once**
   (`REQUEST_SLOTS`), sized *below* the connection pool so exhausting the pool
   is not something that can happen — the queue forms at the door, where

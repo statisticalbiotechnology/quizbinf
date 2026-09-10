@@ -23,7 +23,7 @@ from ..auth import (
 # lower-cased differently from the sync, every match would silently fail.
 from ..canvas import username_from_login_id as username_from_email
 from ..config import Settings, get_settings
-from ..db import get_db
+from ..db import get_db, writing
 from sqlalchemy import select
 
 from ..models import Role, User
@@ -104,14 +104,15 @@ def loadtest_login(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong load-test key")
 
     username = LOADTEST_PREFIX + body.name
-    user = db.scalar(select(User).where(User.username == username))
-    if user is None:
-        user = User(username=username, display_name=username, role=Role.student)
-        db.add(user)
-    # Never promoted, whatever the allowlist says — see the docstring.
-    user.role = Role.student
-    db.commit()
-    db.refresh(user)
+    with writing(db):
+        user = db.scalar(select(User).where(User.username == username))
+        if user is None:
+            user = User(username=username, display_name=username, role=Role.student)
+            db.add(user)
+        # Never promoted, whatever the allowlist says — see the docstring.
+        user.role = Role.student
+        db.commit()
+        db.refresh(user)
     set_session_cookie(response, user.username, settings)
     return user
 

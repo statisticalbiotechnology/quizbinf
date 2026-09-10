@@ -15,8 +15,29 @@ os.environ["TEACHER_USERNAMES"] = "teach"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app import db as db_module  # noqa: E402
 from app.db import Base, engine  # noqa: E402
 from app.main import app  # noqa: E402
+
+
+def _refuse_undeclared_write(statement: str) -> None:
+    """Turn a write outside `writing()` into a test failure.
+
+    In production such a write is logged and allowed through, because it
+    usually works and breaking a feature outright is worse than the rare 500
+    it risks. Here it must be fatal: CI is the only place a missed write path
+    gets found before a lecture does, and the failure it causes there —
+    SQLite refusing to promote a reader to a writer — happens only under
+    concurrency, which a test suite does not otherwise produce.
+    """
+    raise AssertionError(
+        f"write issued outside writing(): {statement.splitlines()[0][:120]}\n"
+        "Wrap the read-then-write sequence in `with writing(db)`, or decorate "
+        "the service function with `@write_path`."
+    )
+
+
+db_module.on_undeclared_write = _refuse_undeclared_write
 
 
 @pytest.fixture(autouse=True)

@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import service
 from ..auth import current_teacher, current_user
 from ..config import Settings, get_settings
-from ..db import SessionLocal, get_db
+from ..db import SessionLocal, get_db, writing
 from ..events import broadcaster
 from ..models import Answer, Choice, Phase, Question, Quiz, QuizSession, User
 from ..public_base import public_base_url
@@ -120,10 +120,11 @@ def create_session(
     quiz = db.get(Quiz, quiz_id)
     if quiz is None or quiz.owner_id != teacher.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Quiz not found")
-    session = QuizSession(quiz_id=quiz.id, is_loadtest=loadtest)
-    db.add(session)
-    db.commit()
-    db.refresh(session)
+    with writing(db):
+        session = QuizSession(quiz_id=quiz.id, is_loadtest=loadtest)
+        db.add(session)
+        db.commit()
+        db.refresh(session)
     return session
 
 

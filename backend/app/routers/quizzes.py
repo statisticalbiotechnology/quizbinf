@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from .. import export, service
 from ..auth import current_teacher
 from ..config import Settings, get_settings
-from ..db import get_db
+from ..db import get_db, writing
 from ..models import Choice, Question, Quiz, User
 from ..public_base import public_base_url
 from ..schemas import (
@@ -40,10 +40,11 @@ def list_quizzes(
 def create_quiz(
     body: QuizIn, db: Session = Depends(get_db), teacher: User = Depends(current_teacher)
 ) -> Quiz:
-    quiz = Quiz(title=body.title, owner_id=teacher.id)
-    db.add(quiz)
-    db.commit()
-    db.refresh(quiz)
+    with writing(db):
+        quiz = Quiz(title=body.title, owner_id=teacher.id)
+        db.add(quiz)
+        db.commit()
+        db.refresh(quiz)
     return quiz
 
 
@@ -107,17 +108,18 @@ def add_question(
     teacher: User = Depends(current_teacher),
 ) -> Question:
     quiz = _own_quiz(db, quiz_id, teacher)
-    question = Question(
-        quiz_id=quiz.id,
-        position=len(quiz.questions),
-        text=body.text,
-        image_url=body.image_url,
-    )
-    for i, c in enumerate(body.choices):
-        question.choices.append(Choice(position=i, text=c.text, is_correct=c.is_correct))
-    db.add(question)
-    db.commit()
-    db.refresh(question)
+    with writing(db):
+        question = Question(
+            quiz_id=quiz.id,
+            position=len(quiz.questions),
+            text=body.text,
+            image_url=body.image_url,
+        )
+        for i, c in enumerate(body.choices):
+            question.choices.append(Choice(position=i, text=c.text, is_correct=c.is_correct))
+        db.add(question)
+        db.commit()
+        db.refresh(question)
     return question
 
 

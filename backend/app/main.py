@@ -14,7 +14,7 @@ from starlette.responses import FileResponse, JSONResponse
 
 from .auth import RENEW_FLAG, passwords_match, set_session_cookie
 from .config import VOLUME_ENV_FILE, get_settings
-from .db import Base, engine, journal_mode, pool_stats
+from .db import Base, WriteQueueTimeout, engine, journal_mode, pool_stats, write_queue_stats
 from .diagnostics import dump_threads, storage_report
 from .events import broadcaster
 from .routers import auth, backup, images, markdown, quizzes, reports, roster, sessions
@@ -289,9 +289,55 @@ app.include_router(roster.router)
 app.include_router(sessions.router)
 
 
+@app.exception_handler(WriteQueueTimeout)
+async def write_queue_timeout(request: Request, exc: WriteQueueTimeout) -> JSONResponse:
+    """A request waited its turn to write and never got one.
+
+    The same answer as the concurrency cap gives, for the same reason and in
+    the same words: 503 with `Retry-After` says "ask again", and the student
+    view acts on it by re-sending the answer with a jittered backoff. The
+    alternative is what this replaced — SQLite exhausting its busy timeout and
+    raising `database is locked`, which reaches the student as a 500 telling
+    them the server is broken and to stop trying.
+    """
+    log.warning("write queue full: %s", request.url.path)
+    return JSONResponse(
+        {"detail": "The server is busy. Please try again."},
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        headers={"Retry-After": "1"},
+    )
+
+
 # Identifies this process across requests. Two different values coming back
 # from the same URL mean more than one instance is serving it.
 INSTANCE_ID = secrets.token_hex(4)
+
+
+def _code_fingerprint() -> str:
+    """A hash of the application's own source, computed once at startup.
+
+    It answers one question that cost real time to answer any other way: *is
+    the code I just merged the code that is running?* Serve pulls an image
+    tag, and nothing the app returned said which build it was — so a load test
+    against a deployment that had not been redeployed would look exactly like
+    a fix that did not work.
+
+    Source rather than a build argument, because the image is built by a
+    workflow this app does not control, and a fingerprint that needs the
+    Dockerfile to cooperate is one that silently reports "unknown" the first
+    time somebody builds it another way. Run
+    `python -c "from app.main import _code_fingerprint; print(_code_fingerprint())"`
+    on a checkout to get the value a deployment of it should report.
+    """
+    root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*.py")):
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:8]
+
+
+CODE_FINGERPRINT = _code_fingerprint()
 
 
 @app.get("/api/health")
@@ -324,11 +370,21 @@ async def health() -> dict:
         "storage": "persistent" if settings._writable_data_dir() else "ephemeral",
         "instance": INSTANCE_ID,
         "secret": fingerprint[:8],
+        # Which build this is. See `_code_fingerprint`: without it, "the fix
+        # did not work" and "the fix was never deployed" look identical.
+        "code": CODE_FINGERPRINT,
         # The freeze this app has already suffered once is invisible from
         # outside: requests stop being answered while this endpoint keeps
         # saying ok, because it needs no database. `checked_out` climbing to
         # `size` and staying there is that failure, visible from a phone.
         "db_pool": pool_stats(),
+        # SQLite takes one writer at a time, so this is the app's remaining
+        # hard limit and the one a bigger machine does not raise. `waiting`
+        # above zero under load is writers queueing for each other — which
+        # from outside looks identical to the *previous* failure, a saturated
+        # request cap over an idle pool, and had to be told apart by deploying
+        # a change and looking again.
+        "write_queue": write_queue_stats(),
         "journal_mode": journal_mode(),
         # Streams this process is holding. Invisible everywhere else: exempt
         # from the cap, holding no connection, absent from the request log
