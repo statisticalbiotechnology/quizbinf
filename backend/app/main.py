@@ -16,6 +16,7 @@ from .auth import RENEW_FLAG, passwords_match, set_session_cookie
 from .config import VOLUME_ENV_FILE, get_settings
 from .db import Base, engine, journal_mode, pool_stats
 from .diagnostics import dump_threads, storage_report
+from .events import broadcaster
 from .routers import auth, backup, images, markdown, quizzes, reports, roster, sessions
 
 log = logging.getLogger("quizbinf")
@@ -329,6 +330,11 @@ async def health() -> dict:
         # `size` and staying there is that failure, visible from a phone.
         "db_pool": pool_stats(),
         "journal_mode": journal_mode(),
+        # Streams this process is holding. Invisible everywhere else: exempt
+        # from the cap, holding no connection, absent from the request log
+        # once established. High long after a lecture ended means the clients
+        # went away and the disconnects never arrived.
+        "sse_streams": broadcaster.total_open(),
     }
 
 
