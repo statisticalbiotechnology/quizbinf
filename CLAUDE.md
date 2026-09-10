@@ -213,11 +213,17 @@ quizbinf/
   time out is **503 with `Retry-After`**, not the 500 that `database is
   locked` produced.
 
-  `record_participant` is the one deliberate exception, and the comment on it
-  explains why: it runs on `/state` and on every SSE connect, and the throttle
-  means it writes on almost none of them. Declaring it a writer would put the
-  busiest path in the app back behind the write lock. It reads first, outside
-  the lock, and asks for the lock only when it has something to write.
+  **A path that usually has nothing to write must not declare itself a
+  writer.** Two do this, and both comments say why. `record_participant` runs
+  on `/state` and on every SSE connect while the throttle means it writes on
+  almost none of them. `get_or_create_user` is every student's arrival, and
+  writing unconditionally — re-setting `role` to the value it already held —
+  cost a lecture: **185 of 200 logins refused** after the full
+  `WRITE_QUEUE_SECONDS`, 8 students in the session, and the connection pool
+  idle at 15 of 50. Nothing was contended except a lock taken for no reason.
+  Both now read first, outside the lock, and take it only when there is
+  genuinely something to write — re-reading inside the write transaction,
+  because the row may have appeared in between.
 
   Missing a write path is the failure this is all about, so `db.py` notices
   one: an INSERT/UPDATE/DELETE outside `writing()` logs a warning in
