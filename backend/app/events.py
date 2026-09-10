@@ -27,6 +27,20 @@ class Broadcaster:
         """Open streams for a session — roughly, clients following right now."""
         return len(self._subscribers.get(session_code, ()))
 
+    def total_open(self) -> int:
+        """Every stream this process is holding, across all sessions.
+
+        Reported by `/api/health` because a stream is invisible from
+        everywhere else: it is exempt from the concurrency cap, holds no
+        database connection, and appears in no request log once established.
+        A count that stays high after everyone has gone home is a leak — the
+        client vanished and the disconnect never reached us, which through a
+        reverse proxy is entirely possible — and each of those wakes on its
+        keep-alive timer forever. Diagnosing that from outside was impossible
+        without this number.
+        """
+        return sum(len(queues) for queues in self._subscribers.values())
+
     async def publish(self, session_code: str, payload: dict) -> None:
         for queue in list(self._subscribers.get(session_code, ())):
             queue.put_nowait(payload)
