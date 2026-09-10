@@ -634,6 +634,33 @@ URL so the QR code resolves. See the README.
   restore-everything-including-credentials bundle is ever wanted, it needs to
   be a deliberate, separately-argued opt-in.
 
+  **A damaged database is the case the backup exists for, so it must not be
+  the case the backup refuses.** `VACUUM INTO` reads every page, which makes
+  it the first thing to fail on a corrupt file — and the deployment did
+  corrupt, answering `database disk image is malformed` while its real lecture
+  data was still readable. The endpoint whose whole purpose is rescue produced
+  nothing. It now falls back to a **raw byte copy plus the `-wal`** (under WAL
+  the recent commits are in the log, and a copy without it loses them
+  silently), and the README in the archive says which of the two kinds it is
+  and gives the `sqlite3 .recover` incantation. `tests/
+  test_corrupt_database.py` damages a database on purpose and pins both.
+
+  **`GET /api/health/storage` reports `integrity`.** The corruption presented
+  as fast 500s on some logins and not others, with the *same* count of them
+  across two separate runs — which is a damaged page, not contention, and
+  three rounds of concurrency work were spent explaining it as contention. A
+  slow volume, an exhausted pool and a broken file are indistinguishable from
+  a latency column; nothing the app exposed could tell them apart. Take a
+  backup and check it (`PRAGMA integrity_check`) when you take it, not when
+  you need it.
+
+  **SQLite's locking is unreliable on a network filesystem, and WAL does not
+  work on one at all** — it needs real shared memory for the `-shm` file. If
+  the volume is network-backed, corruption is the expected outcome rather than
+  bad luck, and no amount of tuning inside the app substitutes for moving the
+  database. Establish what the storage class actually is before concluding
+  anything else about a corrupt file.
+
   The snapshot is written under a random filename rather than `quizbinf.db`:
   `VACUUM INTO` refuses to overwrite, so naming it after its source breaks the
   moment the workspace and the data directory coincide.

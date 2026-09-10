@@ -32,6 +32,7 @@ import sys
 import time
 from pathlib import Path
 
+from .backup import integrity_report
 from .config import Settings
 
 
@@ -127,6 +128,15 @@ def storage_report(settings: Settings) -> dict:
         "write_and_fsync": _timed(write_and_sync),
         "read_back": _timed(read_back),
         "sqlite_read": _timed(query),
+        # Is the file itself sound? Everything else here measures how *fast*
+        # the storage is, and for three rounds of diagnosis that framing was
+        # the mistake: requests were failing in ways that read as contention —
+        # some logins 500ing in 20 ms and others not, the same count of them
+        # twice — while the actual answer was that the database was damaged
+        # and no amount of concurrency work would touch it. A slow disk and a
+        # corrupt file look identical from a latency column and nothing else
+        # the app exposed could tell them apart.
+        "integrity": _timed(lambda: integrity_report(settings)),
         "files": _sqlite_files(settings),
         "volume": _volume_free(settings),
     }
