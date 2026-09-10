@@ -30,8 +30,11 @@ from .config import Settings
 #: Any configuration key whose *value* is a credential. Matched by pattern
 #: rather than listed, so a secret added later is redacted by default instead
 #: of being published by an oversight — the failure direction matters more
-#: than the precision here.
-SECRET_KEY = re.compile(r"SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL", re.IGNORECASE)
+#: than the precision here. `KEY` earns its place the hard way: `LOADTEST_KEY`
+#: was added later, matched none of the other words, and rode out inside an
+#: archive until a test asked. A setting named `…KEY` is a credential far more
+#: often than not, and over-redacting costs a lookup.
+SECRET_KEY = re.compile(r"SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|KEY", re.IGNORECASE)
 
 #: A password embedded in a database URL, e.g. postgresql://user:pw@host/db.
 URL_PASSWORD = re.compile(r"(?P<prefix>://[^:/@\s]+:)(?P<password>[^@/\s]+)(?P<at>@)")

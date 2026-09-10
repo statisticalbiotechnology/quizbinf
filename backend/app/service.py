@@ -131,6 +131,58 @@ def record_participant(db: Session, session: QuizSession, user: User) -> None:
         db.rollback()
 
 
+#: Mirrors `routers.auth.LOADTEST_PREFIX`. Defined here rather than imported
+#: to keep the service layer free of router imports; the test below pins the
+#: two together so they cannot drift.
+LOADTEST_PREFIX = "loadtest-"
+
+
+def delete_loadtest_session(db: Session, session: QuizSession) -> dict:
+    """Delete a rehearsal, its answers, and the throwaway students it created.
+
+    Callers must have established that this is a load-test session — the
+    router does, and refuses otherwise. Nothing else in the app deletes a
+    session, deliberately.
+    """
+    rounds = list(session.rounds)
+    answers = sum(len(r.answers) for r in rounds)
+
+    participants = list(
+        db.scalars(
+            select(SessionParticipant).where(SessionParticipant.session_id == session.id)
+        )
+    )
+    for participant in participants:
+        db.delete(participant)
+    # The rounds cascade to their answers, so this must happen before the
+    # orphan check below finds those students still holding one.
+    db.delete(session)
+    db.flush()
+
+    # The throwaway students, but only those with nothing left anywhere. A
+    # rehearsal account cannot appear in a real lecture, but checking costs
+    # one query and removes the need for that to stay true.
+    users = 0
+    for user in db.scalars(select(User).where(User.username.startswith(LOADTEST_PREFIX))):
+        still_answering = db.scalar(
+            select(func.count()).select_from(Answer).where(Answer.user_id == user.id)
+        )
+        if still_answering:
+            continue
+        for claim in db.scalars(select(DeviceClaim).where(DeviceClaim.username == user.username)):
+            db.delete(claim)
+        db.delete(user)
+        users += 1
+
+    db.commit()
+    return {
+        "rounds": len(rounds),
+        "answers": answers,
+        "participants": len(participants),
+        "users": users,
+    }
+
+
 def participant_count(db: Session, session: QuizSession) -> int:
     """How many distinct people have opened this session."""
     return (
@@ -223,16 +275,24 @@ def sessions_in_range(
     start: date | None = None,
     end: date | None = None,
 ) -> list[QuizSession]:
-    """The teacher's own sessions, oldest first, within an optional date range.
+    """The teacher's own *lectures*, oldest first, within an optional date range.
 
     Shared by both end-of-term reports so they cannot disagree about which
     lectures are in scope — including the end date being inclusive, which is
     what a person means by "to the 12th".
+
+    Load-test sessions are excluded here, in the one place both reports go
+    through. A rehearsal run against the live app is a session that ran rounds
+    like any other, so leaving it in would put it in the Canvas gradebook
+    denominator and mark every real student absent from a lecture that never
+    happened — and nothing in the app deletes a session, so the damage would
+    stand. Filtering at the source means a report added later inherits the
+    exclusion instead of having to remember it.
     """
     query = (
         select(QuizSession)
         .join(Quiz, QuizSession.quiz_id == Quiz.id)
-        .where(Quiz.owner_id == teacher.id)
+        .where(Quiz.owner_id == teacher.id, QuizSession.is_loadtest.is_(False))
         .order_by(QuizSession.created_at, QuizSession.id)
     )
     if start is not None:

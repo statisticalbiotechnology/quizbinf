@@ -18,6 +18,18 @@ class MockLoginIn(BaseModel):
     display_name: str = ""
 
 
+class LoadTestLoginIn(BaseModel):
+    """Signing in a throwaway student for a rehearsal against a live app.
+
+    `name` is a label, not an identity: it is prefixed before it becomes a
+    username, so nothing here can collide with, or impersonate, a real
+    student.
+    """
+
+    key: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=40, pattern=r"^[a-z0-9-]+$")
+
+
 class RosterLoginIn(BaseModel):
     """Identification against the course roster.
 

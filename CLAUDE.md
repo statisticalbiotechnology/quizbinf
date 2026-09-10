@@ -516,9 +516,24 @@ URL so the QR code resolves. See the README.
   Read it for *relative* signals — one endpoint far slower than the rest, a p99
   an order of magnitude past its p50, a 500, a pool pinned at its limit — and
   not for absolute capacity: the server and 150 Python clients share one
-  machine, so the numbers are pessimistic by a large and unknown factor. Point
-  it at a throwaway instance; it creates users and answers as them, and it
-  needs mock login, so it cannot reach production.
+  machine, so the numbers are pessimistic by a large and unknown factor.
+
+  **It can be run against the deployment itself**, which is the instance worth
+  testing — a laptop has more cores and a local disk. Two things make that
+  safe, and both are load-bearing (`deploy/LOADTEST.md`, `tests/
+  test_loadtest_mode.py`). `LOADTEST_KEY` opens a door that is otherwise shut,
+  and it mints **students only**, under the reserved `loadtest-` prefix: the
+  deployment's only real login is KTH's OIDC, and a key that could mint a
+  teacher would be a way to read the whole class's participation record. And a
+  session started with `loadtest=true` is flagged out of `sessions_in_range`,
+  which is where both attendance reports get their lectures — an unflagged
+  rehearsal would enter the Canvas gradebook denominator and mark every real
+  student absent from a lecture that never happened.
+  `DELETE /api/sessions/{code}` then removes it, and refuses any session that
+  is *not* a rehearsal: answers are the irreplaceable thing here and a
+  six-character code is easy to mistype. Without a key it refuses to run
+  anywhere that does not offer mock login, checked against the server rather
+  than trusted from the command line.
 
   What it found is fixed and pinned in `tests/test_load_guards.py`, as
   statements about the code rather than as timings — a test that fails when CI
@@ -681,6 +696,11 @@ CHROME_BIN=/path/to/chrome npm run e2e                # if Chromium is not on PA
 # the teacher refreshing the projected view mid-burst
 cd backend && python -m loadtest.lecture --base-url http://localhost:8000
 python -m loadtest.lecture --students 300 --burst-seconds 0.2   # harder than reality
+
+# against the real deployment — needs LOADTEST_KEY set on it and a teacher
+# cookie from a browser; see deploy/LOADTEST.md
+QUIZBINF_LOADTEST_KEY=… QUIZBINF_TEACHER_COOKIE=… \
+  python -m loadtest.lecture --base-url https://quizbinf.serve.scilifelab.se --students 200
 ```
 
 ### Migrations
@@ -709,7 +729,9 @@ alembic upgrade head
 | `PUT /api/quizzes/{id}/questions/order` | teacher | set the running order — the **complete** list of question ids |
 | `GET /api/quizzes/{id}/export.{md,html}?answers=` | teacher | the questions as study material, figures made absolute |
 | `DELETE /api/quizzes/{id}/questions/{qid}` | teacher | delete a question — **409 once it has been asked** |
-| `POST /api/sessions?quiz_id=` | teacher | start a lecture session |
+| `POST /api/sessions?quiz_id=&loadtest=` | teacher | start a lecture session; `loadtest=true` marks a rehearsal, kept out of every attendance report |
+| `DELETE /api/sessions/{code}` | teacher | delete a **load-test** session and the throwaway students it made — **409 for a real one** |
+| `POST /api/auth/loadtest-login` | key holder | **rehearsal only:** sign in a throwaway student; off unless `LOADTEST_KEY` is set |
 | `GET /api/sessions/{code}/join-url` | teacher | the URL the QR code encodes |
 | `POST /api/sessions/{code}/rounds` | teacher | open a `pre`/`post` round |
 | `POST /api/sessions/{code}/rounds/{id}/close` | teacher | close the open round |

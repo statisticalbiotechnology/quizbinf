@@ -99,6 +99,17 @@ class Settings(BaseSettings):
     # without anyone having to intervene; a lecture fits comfortably inside it.
     device_binding_hours: int = 12
 
+    # Rehearsing a lecture against this deployment. Empty means off, and off
+    # is the default: with no key set there is no way in but the real login.
+    #
+    # Set it to a long random value and `backend/loadtest/lecture.py` can sign
+    # in as throwaway students — students only, never a teacher, and only
+    # under LOADTEST_PREFIX so the accounts it makes are recognisable at a
+    # glance and removable afterwards. It is a password for a door that would
+    # otherwise not exist, so treat it as one: put it in the volume's config
+    # file, and unset it once the rehearsal is done.
+    loadtest_key: str = ""
+
     # How many database-backed requests may be in flight at once, and how long
     # one waits for a slot before it is turned away with a 503. Configurable
     # rather than baked in because getting this wrong takes the app down in
@@ -145,6 +156,16 @@ class Settings(BaseSettings):
     @property
     def mock_login_allowed(self) -> bool:
         return self.mock_login and self.environment != "production"
+
+    @property
+    def loadtest_allowed(self) -> bool:
+        """A key must be set, and a long one.
+
+        A short key is worse than none: it invites guessing at a door that
+        creates accounts. There is no rate limit behind this because there is
+        no door at all unless somebody deliberately opens one.
+        """
+        return len(self.loadtest_key) >= 24
 
     @property
     def canvas_configured(self) -> bool:

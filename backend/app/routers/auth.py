@@ -24,9 +24,11 @@ from ..auth import (
 from ..canvas import username_from_login_id as username_from_email
 from ..config import Settings, get_settings
 from ..db import get_db
-from ..models import User
+from sqlalchemy import select
+
+from ..models import Role, User
 from ..public_base import public_base_url
-from ..schemas import MockLoginIn, RosterLoginIn, UserOut
+from ..schemas import LoadTestLoginIn, MockLoginIn, RosterLoginIn, UserOut
 from ..throttle import suggest_throttle, teacher_login_throttle
 
 log = logging.getLogger("quizbinf")
@@ -56,6 +58,61 @@ def _safe_next(target: str) -> str:
 
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(current_user)) -> User:
+    return user
+
+
+#: Every username this endpoint can produce starts with it. Two jobs: a
+#: throwaway account can never collide with or impersonate a real KTH
+#: username, and the accounts a rehearsal leaves behind are identifiable
+#: afterwards without anyone having kept a list.
+LOADTEST_PREFIX = "loadtest-"
+
+
+@router.post("/loadtest-login", response_model=UserOut, include_in_schema=False)
+def loadtest_login(
+    body: LoadTestLoginIn,
+    response: Response,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> User:
+    """Sign in a throwaway student, for rehearsing a lecture against this app.
+
+    The app it most needs rehearsing against is the deployed one — the small
+    machine, the real proxy, the real volume — and that one has no scriptable
+    login by design. This is the door for it, and it is shut unless somebody
+    sets a long `LOADTEST_KEY` in the volume's config file.
+
+    Three properties keep the door narrow:
+
+    * **Students only.** The role is not derived from `TEACHER_USERNAMES` the
+      way every other login is; it is pinned to student. Teacher views hold
+      every student's participation record, so a key that could mint a teacher
+      would be a way to read the whole class's personal data, and the point of
+      this endpoint does not need it — the teacher drives the rehearsal from
+      their own real login.
+    * **Namespaced.** The name is a label, prefixed before it becomes a
+      username, so nothing here can be, or be mistaken for, a real student.
+    * **Off by default, and removable.** No key, no endpoint; and what it
+      leaves behind is identifiable by prefix afterwards.
+
+    Compared in constant time, and the key is never logged.
+    """
+    if not settings.loadtest_allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Load-test login is disabled")
+    if not passwords_match(body.key, settings.loadtest_key):
+        log.warning("load-test login refused: wrong key")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong load-test key")
+
+    username = LOADTEST_PREFIX + body.name
+    user = db.scalar(select(User).where(User.username == username))
+    if user is None:
+        user = User(username=username, display_name=username, role=Role.student)
+        db.add(user)
+    # Never promoted, whatever the allowlist says — see the docstring.
+    user.role = Role.student
+    db.commit()
+    db.refresh(user)
+    set_session_cookie(response, user.username, settings)
     return user
 
 
