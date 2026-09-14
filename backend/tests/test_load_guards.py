@@ -25,10 +25,12 @@ from app.config import get_settings
 from app import db as db_module
 from app import service
 from app.db import (
-    SQLITE_POOL_SIZE,
+    POOL_SIZE,
+    POOL_TIMEOUT,
     SessionLocal,
     WriteQueueTimeout,
     engine,
+    engine_options,
     journal_mode,
     writing,
 )
@@ -52,7 +54,48 @@ def test_the_pool_is_larger_than_the_number_of_requests_allowed_in():
     the door — where waiting is all that happens — instead of at the pool,
     where waiting turns into a 500 for a student who has already submitted.
     """
-    assert SQLITE_POOL_SIZE > main.REQUEST_SLOTS
+    assert POOL_SIZE > main.REQUEST_SLOTS
+
+
+POSTGRES_URL = "postgresql+psycopg://u:p@db.example:5432/quizbinf?sslmode=verify-full"
+
+
+def test_a_postgres_deployment_gets_the_same_pool():
+    """The pool was once sized for SQLite only.
+
+    A Postgres deployment then ran on SQLAlchemy's default of 5 + 10
+    connections behind 40 request slots, so a class arriving at once would
+    have queued at the pool and failed after `POOL_TIMEOUT`: exactly the
+    failure the sizing exists to rule out, reintroduced by changing databases.
+    """
+    options = engine_options(POSTGRES_URL)
+    assert options["pool_size"] > main.REQUEST_SLOTS
+    assert options["pool_size"] == engine_options(get_settings().resolved_database_url)["pool_size"]
+
+
+def test_a_postgres_deployment_survives_losing_its_connections():
+    """A networked database drops connections that a file never does.
+
+    A server restart or a firewall that forgets an idle connection leaves dead
+    connections in the pool; pinging on checkout replaces them before a
+    request fails on one. And a server that does not answer at all must fail
+    a request within seconds rather than hold its thread for libpq's default
+    of waiting forever.
+    """
+    options = engine_options(POSTGRES_URL)
+    assert options["pool_pre_ping"] is True
+    assert 0 < options["connect_args"]["connect_timeout"] < POOL_TIMEOUT
+
+
+def test_the_postgres_options_are_ones_the_engine_accepts():
+    """Built without connecting, so it needs no server, only valid arguments."""
+    from sqlalchemy import create_engine
+
+    probe = create_engine(POSTGRES_URL, **engine_options(POSTGRES_URL))
+    try:
+        assert probe.pool.size() == POOL_SIZE
+    finally:
+        probe.dispose()
 
 
 def test_sqlite_runs_in_wal_mode():

@@ -44,7 +44,19 @@ class Base(DeclarativeBase):
 #: much worse failure, because a request waiting on checkout has already been
 #: accepted and logged nothing. Sized above the thread pool so the queue forms
 #: where it is bounded and fair, never at the pool.
-SQLITE_POOL_SIZE = 50
+#:
+#: This holds for any database, not only SQLite. It was first applied to SQLite
+#: alone, which left a Postgres deployment on SQLAlchemy's default of 5 + 10
+#: connections behind the same 40 threads. 50 + 10 stays inside Postgres's
+#: default `max_connections` of 100 for the single replica this app runs.
+POOL_SIZE = 50
+POOL_OVERFLOW = 10
+
+#: How long opening a new Postgres connection may take. libpq's default is to
+#: wait forever, which in practice means the operating system's TCP timeout of
+#: about two minutes: an unreachable database server would hold every thread
+#: that tried, and the app would stop answering instead of failing.
+CONNECT_TIMEOUT_SECONDS = 5
 
 #: How long a request will wait for a connection before giving up. The default
 #: is 30 s, which is far past the point where the student has reloaded the page
@@ -212,19 +224,34 @@ def write_path(fn):
     return wrapper
 
 
-def _make_engine():
-    settings = get_settings()
-    url = settings.resolved_database_url
-    kwargs = {"pool_timeout": POOL_TIMEOUT}
-    sqlite = url.startswith("sqlite")
-    if sqlite:
+def engine_options(url: str) -> dict:
+    """The keyword arguments `create_engine` gets for this database URL."""
+    kwargs = {
+        "pool_timeout": POOL_TIMEOUT,
+        "pool_size": POOL_SIZE,
+        "max_overflow": POOL_OVERFLOW,
+    }
+    if url.startswith("sqlite"):
         # `isolation_level=None` turns off pysqlite's implicit transaction
         # handling, so the `begin` handler below is what starts a transaction
         # rather than the driver silently emitting a plain BEGIN of its own.
         kwargs["connect_args"] = {"check_same_thread": False, "isolation_level": None}
-        kwargs["pool_size"] = SQLITE_POOL_SIZE
-        kwargs["max_overflow"] = 10
-    engine = create_engine(url, **kwargs)
+    else:
+        # A database across a network loses connections that a file never
+        # does: the server restarts for a security update, or a firewall
+        # forgets an idle connection without telling either end. The pool
+        # would hand such a connection to the next request, which fails with a
+        # 500. Pinging on checkout costs a round trip and replaces a dead
+        # connection before anyone uses it.
+        kwargs["pool_pre_ping"] = True
+        kwargs["connect_args"] = {"connect_timeout": CONNECT_TIMEOUT_SECONDS}
+    return kwargs
+
+
+def _make_engine():
+    url = get_settings().resolved_database_url
+    sqlite = url.startswith("sqlite")
+    engine = create_engine(url, **engine_options(url))
     if sqlite:
 
         @event.listens_for(engine, "begin")

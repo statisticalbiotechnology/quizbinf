@@ -120,7 +120,7 @@ if settings.environment != "production":
     )
 
 #: How many *database-backed* requests may be in the app at once. Below the
-#: pool they draw from (`db.SQLITE_POOL_SIZE`), so running out of connections
+#: pool they draw from (`db.POOL_SIZE`), so running out of connections
 #: is not something that can happen: the queue forms here instead, where
 #: waiting is all it does. Roughly the size of the thread pool that runs
 #: synchronous endpoints, since that is how much work can actually proceed.
