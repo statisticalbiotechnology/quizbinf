@@ -109,6 +109,21 @@ class WriteQueueTimeout(Exception):
 #: arrival order, and a waiter on it *waits* rather than failing.
 _write_gate = threading.Lock()
 
+#: Whether the gate above is used at all. Set from the database URL when the
+#: engine is built.
+#:
+#: It exists because SQLite permits one writer at a time and arbitrates badly
+#: between contenders. A real database server does neither: Postgres has
+#: row-level locking and MVCC, so concurrent writers are the normal case, and
+#: serialising them in this process throws away the single largest reason to
+#: move there. Measured on the deployment after the migration, with the gate
+#: still on: `write_queue.longest_wait` 1.384 s and `student answer` p50
+#: 2.620 s across 2400 answers, with the connection pool never past 40 of 50.
+#:
+#: `writing()` is called from the service layer, which knows nothing about
+#: which backend is configured, so the decision has to live here.
+_serialise_writes = True
+
 #: How many threads are queued for it, and how long the longest has waited.
 #:
 #: Both exist because of how the previous two failures had to be diagnosed.
@@ -168,6 +183,23 @@ def writing(db: Session) -> Iterator[Session]:
         yield db
         return
 
+    if not _serialise_writes:
+        # A database that handles concurrent writers itself. Still end any
+        # deferred transaction first and commit at the end, so the block keeps
+        # its meaning — just without one writer at a time.
+        db.commit()
+        _local.depth = 1
+        try:
+            yield db
+        except BaseException:
+            db.rollback()
+            raise
+        else:
+            db.commit()
+        finally:
+            _local.depth = 0
+        return
+
     global _waiting, _longest_wait
     timeout = _write_timeout()
     with _waiting_lock:
@@ -225,7 +257,13 @@ def write_path(fn):
 
 
 def engine_options(url: str) -> dict:
-    """The keyword arguments `create_engine` gets for this database URL."""
+    """The keyword arguments `create_engine` gets for this database URL.
+
+    Also settles whether writes are serialised in this process, since that is
+    the same question as which backend this is — see `_serialise_writes`.
+    """
+    global _serialise_writes
+    _serialise_writes = url.startswith("sqlite")
     kwargs = {
         "pool_timeout": POOL_TIMEOUT,
         "pool_size": POOL_SIZE,

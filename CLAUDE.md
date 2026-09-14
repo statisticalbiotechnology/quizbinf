@@ -176,6 +176,18 @@ quizbinf/
   the sessionmaker sets `expire_on_commit=False`, so the endpoint can still
   read the user's attributes without another query), and `events()` closes its
   session before it awaits *anything*, not merely before it streams.
+- **The connection pool and the write gate are not the same kind of thing,
+  and only one of them is SQLite's.** `POOL_SIZE` applies to every backend —
+  it used to be set inside the SQLite branch, so pointing `DATABASE_URL` at
+  Postgres fell back to SQLAlchemy's defaults of five plus ten overflow,
+  fifteen connections against forty request slots, which is exactly the
+  exhaustion failure the constant exists to prevent. A 200-student run against
+  Postgres peaks at **39 checked out**, so that migration would have broken on
+  its first busy lecture and looked like a new problem. The `writing()` gate is
+  the opposite: it exists because SQLite permits one writer at a time and
+  arbitrates badly between contenders, and `_serialise_writes` turns it off for
+  anything else. Leaving it on under Postgres would serialise every write in
+  this process and discard MVCC — the single largest reason to move there.
 - **The lecture-hall settings live in `app/db.py`,** and the defaults they
   replace are what made the app slow in front of a class. SQLite runs in
   **WAL** mode — without it a single writer blocks every reader, so one

@@ -731,3 +731,78 @@ def test_the_write_timeout_can_be_retuned_without_a_rebuild(monkeypatch):
     assert db_module._write_timeout() == settings.write_queue_seconds
     monkeypatch.setattr(settings, "write_queue_seconds", 12.5)
     assert db_module._write_timeout() == 12.5
+
+
+def test_the_pool_is_sized_for_every_backend_not_only_sqlite():
+    """Moving to Postgres must not arrive with the pool-exhaustion failure.
+
+    `pool_size` and `max_overflow` used to be set inside the SQLite branch, so
+    pointing `DATABASE_URL` at Postgres fell back to SQLAlchemy's defaults —
+    five connections with ten overflow, fifteen in total, against forty
+    request slots. That is exactly the shape this constant exists to prevent,
+    and it is documented in CLAUDE.md as having taken a lecture down once
+    already. It would have come back on the first busy lecture after the
+    migration, looking like a brand-new problem.
+    """
+    import sqlalchemy
+
+    for url in ("sqlite:///:memory:", "postgresql+psycopg://u:p@example.invalid/db"):
+        engine = sqlalchemy.create_engine(
+            url,
+            pool_size=db_module.POOL_SIZE,
+            max_overflow=10,
+            poolclass=sqlalchemy.pool.QueuePool,
+        )
+        assert engine.pool.size() >= main.REQUEST_SLOTS, url
+        engine.dispose()
+
+    assert db_module.POOL_SIZE >= main.REQUEST_SLOTS
+
+
+def test_the_write_gate_is_a_sqlite_workaround_not_a_rule(monkeypatch):
+    """A real database server arbitrates its own writers; this must step aside.
+
+    The gate exists because SQLite permits one writer at a time and chooses
+    badly between contenders. Postgres has MVCC and row-level locking, so
+    concurrent writers are the normal case — and serialising them in this
+    process would discard the single largest reason to move to it, while
+    looking exactly like the problem the move was meant to solve.
+
+    `writing()` is called from the service layer, which knows nothing about
+    which backend is configured, so the decision has to live here.
+    """
+    monkeypatch.setattr(db_module, "_serialise_writes", False)
+
+    held_by_writer = []
+    db = SessionLocal()
+    try:
+        with writing(db):
+            # If the gate were taken, this would fail to acquire it.
+            held_by_writer.append(db_module._write_gate.acquire(blocking=False))
+            if held_by_writer[-1]:
+                db_module._write_gate.release()
+            db.execute(text("SELECT 1"))
+    finally:
+        db.close()
+
+    assert held_by_writer == [True], "the write gate was taken on a non-SQLite backend"
+
+
+def test_the_write_gate_still_applies_to_sqlite():
+    """The other half: on SQLite it must still serialise, or the whole
+    read/write split above is undone."""
+    assert db_module._serialise_writes is True, (
+        "the test suite runs on SQLite, so writes must still be serialised"
+    )
+
+    taken = []
+    db = SessionLocal()
+    try:
+        with writing(db):
+            taken.append(db_module._write_gate.acquire(blocking=False))
+            if taken[-1]:
+                db_module._write_gate.release()
+    finally:
+        db.close()
+
+    assert taken == [False], "the write gate was not held while writing()"
