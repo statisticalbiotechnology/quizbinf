@@ -9,6 +9,12 @@ import { SessionState } from '../models';
 const SEND_RETRIES = 3;
 /** The first wait, doubled each attempt and jittered — see `answer()`. */
 const SEND_BACKOFF_MS = 400;
+/**
+ * Statuses that mean the answer never reached a server with an opinion on it:
+ * 0 is a dropped connection, 503 the app shedding load, and 502 and 504 the
+ * proxy in front of the app failing to reach it.
+ */
+const RETRYABLE_STATUSES = [0, 502, 503, 504];
 
 @Component({
   selector: 'app-student-session',
@@ -145,6 +151,13 @@ export class StudentSessionComponent implements OnInit, OnDestroy {
    * Only a busy server and a dropped connection are retried. Every other
    * error means the server has an opinion — most often that the round has
    * closed — and the answer to that is to go and get the truth, not to insist.
+   *
+   * A 502 or 504 counts as a dropped connection. It is written by Serve's
+   * proxy, not by this app, and says the proxy lost its way to the app: a
+   * load test at the deployment got 502s under a burst and saw the proxy cut
+   * every open connection at once. Re-sending is safe even if the first try
+   * was recorded, because an answer is one row per student per round and a
+   * repeat overwrites it with the same choice.
    */
   answer(choiceId: number, attempt = 0): void {
     this.sending.set(true);
@@ -155,7 +168,7 @@ export class StudentSessionComponent implements OnInit, OnDestroy {
         this.sending.set(false);
       },
       error: (err) => {
-        const busy = err?.status === 503 || err?.status === 0;
+        const busy = RETRYABLE_STATUSES.includes(err?.status);
         if (busy && attempt < SEND_RETRIES) {
           const wait = SEND_BACKOFF_MS * Math.pow(2, attempt) * (0.5 + Math.random());
           setTimeout(() => this.answer(choiceId, attempt + 1), wait);

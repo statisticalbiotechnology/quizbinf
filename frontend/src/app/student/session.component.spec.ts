@@ -74,6 +74,29 @@ describe('StudentSessionComponent answering under load', () => {
     expect(component.sendError()).toBe('');
   }));
 
+  for (const [status, statusText] of [
+    [0, 'Unknown Error'],
+    [502, 'Bad Gateway'],
+    [504, 'Gateway Timeout'],
+  ] as const) {
+    it(`re-sends an answer lost on the way to the app (${status})`, fakeAsync(() => {
+      component.answer(42);
+
+      // The proxy in front of the app lost the request, or the connection
+      // dropped: the app never ruled on this answer, so it is still wanted.
+      answers()[0].flush('<html>nginx</html>', { status, statusText });
+      expect(component.selected()).toBeNull();
+
+      tick(2000);
+      const retry = answers();
+      expect(retry.length).toBe(1);
+      retry[0].flush({ ok: true, choice_id: 42 });
+
+      expect(component.selected()).toBe(42);
+      expect(component.sendError()).toBe('');
+    }));
+  }
+
   it('gives up in the end and says so, rather than looking like it worked', fakeAsync(() => {
     component.answer(42);
     for (let i = 0; i < 5; i++) {
