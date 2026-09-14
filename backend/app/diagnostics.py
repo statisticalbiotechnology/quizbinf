@@ -128,6 +128,31 @@ def storage_report(settings: Settings) -> dict:
         "write_and_fsync": _timed(write_and_sync),
         "read_back": _timed(read_back),
         "sqlite_read": _timed(query),
+        # What one transaction costs before it has written anything.
+        #
+        # The deployment's log shows single requests holding a slot for five,
+        # thirty, even sixty seconds with *nothing else in flight* and the
+        # connection pool almost empty. There is no queue in that, so every
+        # concurrency guard in this app is beside the point for it — the time
+        # is going somewhere underneath.
+        #
+        # `BEGIN IMMEDIATE` then `COMMIT` takes SQLite's write lock and gives
+        # it straight back, writing no data. On a local disk that is
+        # microseconds; over a network filesystem it is round trips, and it is
+        # paid once per write — so a class of 150 answering multiplies it by
+        # 150. Measuring it is the difference between "writes are slow" and a
+        # number you can multiply.
+        "empty_write_txn": _timed(lambda: _time_empty_transaction(settings)),
+        # What a checkpoint costs, which is the leading suspect for a stall on
+        # an idle app. A checkpoint copies the write-ahead log back into the
+        # database and runs *inside* whichever ordinary request trips the
+        # threshold — so one student's `/state` pays for all of it. The WAL has
+        # been 3.6-4.4 MB every time we have looked, which is exactly SQLite's
+        # default `wal_autocheckpoint` of 1000 pages, so they fire regularly.
+        #
+        # PASSIVE, so it never blocks a reader or a writer: this must measure
+        # the deployment, not disturb it.
+        "wal_checkpoint": _timed(lambda: _time_checkpoint(settings)),
         # Is the file itself sound? Everything else here measures how *fast*
         # the storage is, and for three rounds of diagnosis that framing was
         # the mistake: requests were failing in ways that read as contention —
@@ -145,6 +170,37 @@ def storage_report(settings: Settings) -> dict:
     except OSError:
         pass
     return report
+
+
+def _time_empty_transaction(settings: Settings) -> str:
+    """Take SQLite's write lock and release it, writing nothing."""
+    url = settings.resolved_database_url
+    if not url.startswith("sqlite"):
+        return "skipped: not SQLite"
+    path = url.split("sqlite:///", 1)[-1]
+    connection = sqlite3.connect(path, timeout=20, isolation_level=None)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("COMMIT")
+    finally:
+        connection.close()
+    return "lock taken and released, no rows written"
+
+
+def _time_checkpoint(settings: Settings) -> dict:
+    """Checkpoint the write-ahead log, and report how much moved."""
+    url = settings.resolved_database_url
+    if not url.startswith("sqlite"):
+        return {"note": "not a SQLite deployment"}
+    path = url.split("sqlite:///", 1)[-1]
+    connection = sqlite3.connect(path, timeout=30, isolation_level=None)
+    try:
+        busy, log_pages, moved = connection.execute(
+            "PRAGMA wal_checkpoint(PASSIVE)"
+        ).fetchone()
+    finally:
+        connection.close()
+    return {"busy": busy, "wal_pages": log_pages, "pages_checkpointed": moved}
 
 
 def dump_threads(reason: str) -> None:

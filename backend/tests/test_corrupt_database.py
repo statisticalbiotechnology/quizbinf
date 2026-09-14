@@ -174,3 +174,54 @@ def test_the_storage_probe_carries_the_integrity_reading(tmp_path, settings_for)
     report = diagnostics.storage_report(settings_for(database))
     assert "integrity" in report
     assert report["integrity"]["result"]["ok"] is False
+
+
+def test_the_probe_times_a_bare_write_transaction(tmp_path, settings_for):
+    """What one transaction costs before it has written anything.
+
+    The deployment's log shows single requests holding a slot for five, thirty
+    and sixty seconds with *nothing else in flight* and the pool almost empty.
+    There is no queue in that, so the concurrency guards in this app are beside
+    the point for it. `BEGIN IMMEDIATE` followed by `COMMIT` isolates the cost
+    of taking the write lock from the cost of writing anything — microseconds
+    on a local disk, network round trips over NFS, and paid once per answer.
+    """
+    from app import diagnostics
+
+    database = tmp_path / "timing.db"
+    _populate(database)
+    report = diagnostics.storage_report(settings_for(database))
+
+    assert "empty_write_txn" in report
+    assert "error" not in report["empty_write_txn"], report["empty_write_txn"]
+    assert report["empty_write_txn"]["seconds"] >= 0
+
+
+def test_the_probe_times_a_checkpoint_and_says_how_much_moved(tmp_path, settings_for):
+    """The leading suspect for a stall on an idle app.
+
+    A checkpoint copies the write-ahead log back into the database, and it runs
+    *inside* whichever ordinary request trips the threshold — so one student's
+    `/state` pays for all of it. `pages_checkpointed` is what turns "the app
+    hung" into "it moved four megabytes over NFS while somebody waited".
+
+    PASSIVE, because this must measure the deployment rather than disturb it:
+    it never blocks a reader or a writer, and reports `busy` if it could not
+    finish.
+    """
+    from app import diagnostics
+
+    database = tmp_path / "checkpointing.db"
+    _populate(database)
+    connection = sqlite3.connect(database)
+    connection.execute("PRAGMA journal_mode=WAL")
+    with connection:
+        connection.executemany(
+            "INSERT INTO answers (who) VALUES (?)", [(f"late-{i}",) for i in range(200)]
+        )
+    connection.close()
+
+    report = diagnostics.storage_report(settings_for(database))
+    checkpoint = report["wal_checkpoint"]
+    assert "error" not in checkpoint, checkpoint
+    assert set(checkpoint["result"]) == {"busy", "wal_pages", "pages_checkpointed"}
