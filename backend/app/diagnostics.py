@@ -32,6 +32,8 @@ import sys
 import time
 from pathlib import Path
 
+from sqlalchemy import text
+
 from .backup import integrity_report
 from .config import Settings
 
@@ -143,6 +145,9 @@ def storage_report(settings: Settings) -> dict:
         # 150. Measuring it is the difference between "writes are slow" and a
         # number you can multiply.
         "empty_write_txn": _timed(lambda: _time_empty_transaction(settings)),
+        # The unit everything else is built from. An answer submission runs
+        # five queries, so across a network it cannot beat five of these.
+        "round_trip": _timed(lambda: _time_round_trip(settings)),
         # What a checkpoint costs, which is the leading suspect for a stall on
         # an idle app. A checkpoint copies the write-ahead log back into the
         # database and runs *inside* whichever ordinary request trips the
@@ -173,18 +178,58 @@ def storage_report(settings: Settings) -> dict:
 
 
 def _time_empty_transaction(settings: Settings) -> str:
-    """Take SQLite's write lock and release it, writing nothing."""
+    """Open a transaction and close it again, writing nothing.
+
+    On SQLite this is `BEGIN IMMEDIATE` then `COMMIT`: the price of taking the
+    write lock, separated from the price of writing anything.
+
+    On a database across a network it is the more important number, because
+    every statement is a round trip. One answer submission runs five queries —
+    the user, the session, the open round, the choice, then the answer's own
+    read and insert — so whatever a single round trip costs gets multiplied by
+    five before a student sees their answer land. Measuring it turns "answers
+    are slow" into either "network latency, so send fewer queries" or
+    "something else, keep looking".
+    """
     url = settings.resolved_database_url
-    if not url.startswith("sqlite"):
-        return "skipped: not SQLite"
-    path = url.split("sqlite:///", 1)[-1]
-    connection = sqlite3.connect(path, timeout=20, isolation_level=None)
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute("COMMIT")
-    finally:
-        connection.close()
-    return "lock taken and released, no rows written"
+    if url.startswith("sqlite"):
+        path = url.split("sqlite:///", 1)[-1]
+        connection = sqlite3.connect(path, timeout=20, isolation_level=None)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("COMMIT")
+        finally:
+            connection.close()
+        return "lock taken and released, no rows written"
+
+    # Through the app's own pool, so this is what a request actually pays:
+    # a checked-out connection, not a fresh connect and TLS handshake.
+    from .db import engine
+
+    with engine.begin() as connection:
+        connection.execute(text("SELECT 1"))
+    return "one transaction through the pool, no rows written"
+
+
+def _time_round_trip(settings: Settings) -> str:
+    """The cost of one statement, which is the unit everything else is built from.
+
+    Deliberately the most trivial query there is, run several times on a
+    pooled connection and reported as the fastest — the floor, with no work in
+    it at all. Against a local file that is microseconds; across a network it
+    is the latency to the database host, and an endpoint doing five queries
+    cannot be faster than five of these however well it is written.
+    """
+    from .db import engine
+
+    best = None
+    with engine.connect() as connection:
+        for _ in range(5):
+            started = time.perf_counter()
+            connection.execute(text("SELECT 1"))
+            elapsed = time.perf_counter() - started
+            best = elapsed if best is None else min(best, elapsed)
+    return f"{best * 1000:.2f} ms for one statement on a pooled connection"
 
 
 def _time_checkpoint(settings: Settings) -> dict:
