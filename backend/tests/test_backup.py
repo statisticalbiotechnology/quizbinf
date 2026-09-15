@@ -9,6 +9,7 @@ which is checked by looking for every secret the app holds.
 import io
 import sqlite3
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app import backup
@@ -203,8 +204,8 @@ def test_the_backup_is_teacher_only(student_client, make_client):
 # --- deployments the app cannot snapshot -----------------------------------
 
 
-def test_a_postgres_deployment_is_told_to_use_its_own_tooling(monkeypatch):
-    """Rather than shipping a half-backup that looks like a whole one."""
+def test_a_non_sqlite_deployment_has_no_sqlite_path(monkeypatch):
+    """Nothing may guess a filename out of a URL that has none."""
     from app.config import get_settings
 
     settings = get_settings()
@@ -214,6 +215,36 @@ def test_a_postgres_deployment_is_told_to_use_its_own_tooling(monkeypatch):
     try:
         backup.sqlite_path(settings)
     except backup.NotSupported as e:
-        assert "pg_dump" in str(e)
+        assert "postgresql+psycopg" in str(e)
     else:
-        raise AssertionError("a Postgres deployment must be refused, not guessed at")
+        raise AssertionError("a Postgres deployment has no SQLite file to point at")
+
+
+def test_a_backup_never_describes_itself_as_more_than_it_is():
+    """The concern the old refusal was protecting, kept without the refusal.
+
+    This endpoint used to decline on anything but SQLite and tell the teacher
+    to run `pg_dump` — advice, not a backup: they have a browser and a session
+    cookie, not a shell on the database host. Moving to PostgreSQL would have
+    quietly removed the one button that rescues this app's data.
+
+    It now renders any database into a portable SQLite file. What must not
+    happen is the original worry: an archive that *looks* like a whole-server
+    dump. The three kinds of copy have to be distinguishable inside the
+    archive, because they are read months later by somebody in a hurry.
+    """
+    vacuumed = backup._readme(
+        datetime.now(timezone.utc), 1024, 0, False, backup.VACUUMED
+    )
+    raw = backup._readme(datetime.now(timezone.utc), 1024, 0, False, backup.RAW)
+    copied = backup._readme(datetime.now(timezone.utc), 1024, 0, False, backup.COPIED)
+
+    assert "VACUUM INTO" in vacuumed
+    assert "RAW COPY" not in vacuumed
+
+    assert "RAW COPY" in raw
+    assert ".recover" in raw
+
+    assert "not SQLite" in copied
+    assert "NOT a substitute" in copied, "it must not read as a whole-server dump"
+    assert "pg_dump" in copied, "and it must name the tool that is one"

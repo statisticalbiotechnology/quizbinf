@@ -676,6 +676,36 @@ URL so the QR code resolves. See the README.
   backup and check it (`PRAGMA integrity_check`) when you take it, not when
   you need it.
 
+  **`python -m tools.copy_database` moves the data, and the backup uses the
+  same code.** One implementation serves both directions: off SQLite onto a
+  PostgreSQL server, and — when the deployment's database *is* PostgreSQL —
+  into the SQLite file that `GET /api/backup.zip` hands over. That endpoint
+  used to refuse anything but SQLite and advise `pg_dump`, which is advice
+  rather than a backup: the teacher has a browser and a session cookie, not a
+  shell on the database host, so moving to PostgreSQL would have quietly taken
+  away the one button that rescues this app's data. The archive keeps its
+  shape on every backend, and its README says which of three kinds of copy it
+  holds — vacuumed, raw, or copied from another database — because they are
+  read months later by somebody in a hurry and must not look alike. The copied
+  kind carries the ORM's tables and nothing else, so it says plainly that it
+  is not a substitute for a dump taken on the host.
+
+  **Ids travel unchanged, so PostgreSQL's sequences have to be moved past
+  them.** Answers reference round ids and rounds reference question ids;
+  renumbering would break those or require rewriting every one. A sequence
+  knows nothing about rows inserted with an explicit id, so without
+  `_reset_sequences` the very next INSERT reuses id 1 and fails — which here
+  is the first student to answer in the first lecture after the migration. The
+  copy is verified by counting both ends afterwards rather than trusting the
+  loop's own total: a copy that silently moved nothing looks like success from
+  the inside.
+
+  **A remote database with no TLS is warned about at startup.** The connection
+  to another host carries every student's name and answer, and the database
+  password with them. A warning and not a refusal, because the same URL shape
+  is right for the Postgres container beside the app in `docker-compose`,
+  where there is no network to cross — `sslmode=require` is what silences it.
+
   **SQLite's locking is unreliable on a network filesystem, and WAL does not
   work on one at all** — it needs real shared memory for the `-shm` file. If
   the volume is network-backed, corruption is the expected outcome rather than
@@ -851,7 +881,7 @@ alembic upgrade head
 | `GET /api/sessions/{code}/questions/{id}/comparison` | teacher | pre vs post counts |
 | `GET /api/sessions/{code}/questions/{id}/discussants?count=` | teacher | draw students at random from those who answered — **names only** |
 | `DELETE /api/sessions/{code}/questions/{id}/rounds` | teacher | reset a question — **discards its answers** so it can be run again |
-| `GET /api/backup.zip` | teacher | the whole volume: database, figures, config with secrets redacted |
+| `GET /api/backup.zip` | teacher | the whole volume: database, figures, config with secrets redacted — works on any backend |
 | `POST /api/images` | teacher | upload a figure; returns Markdown to paste |
 | `POST /api/markdown/preview` | teacher | render Markdown for the authoring preview |
 | `GET /api/sessions/{code}/state` | student | full state snapshot (resync) |

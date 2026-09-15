@@ -82,16 +82,45 @@ def sqlite_path(settings: Settings) -> Path:
     """The SQLite file behind this deployment, or raise for anything else."""
     url = settings.resolved_database_url
     if not url.startswith("sqlite"):
-        raise NotSupported(
-            "This deployment does not use SQLite, so the app cannot take its "
-            "own snapshot. Use the database server's own tooling (pg_dump) "
-            "instead."
-        )
+        raise NotSupported(f"this deployment's database is {url.split('://')[0]}")
     return Path(url.split("sqlite:///", 1)[-1])
 
 
-def snapshot_database(settings: Settings, destination: Path) -> bool:
-    """Copy the database. Returns True if the copy is a consistent one.
+def snapshot_other_database(settings: Settings, destination: Path) -> None:
+    """Copy a non-SQLite database into a SQLite file.
+
+    The endpoint used to refuse outright here and tell the teacher to run
+    `pg_dump`, which is advice and not a backup: they have a browser and a
+    session cookie, not a shell on the database host. Moving to PostgreSQL
+    would have quietly taken away the one button that rescues this app's data.
+
+    So the archive keeps its shape whatever the deployment runs on — the same
+    `quizbinf.db`, openable by anyone, checkable with `PRAGMA
+    integrity_check`, restorable onto either backend. It needs no `pg_dump`
+    binary in the image, and therefore cannot fail because that binary is a
+    version behind the server it is pointed at.
+
+    It carries the rows of the tables this app defines and nothing else, so it
+    is not a replacement for a proper dump taken on the database host. It is
+    the portable copy of the only data that cannot be recreated, which is what
+    this endpoint was always for.
+    """
+    from .dbcopy import copy_database
+
+    copy_database(
+        settings.resolved_database_url, f"sqlite:///{destination}", force=False
+    )
+
+
+#: What `snapshot_database` produced, because the README has to say which and
+#: the three are not interchangeable to somebody restoring one.
+VACUUMED = "vacuumed"   #: a consistent SQLite snapshot
+RAW = "raw"             #: a byte copy of a SQLite file that would not vacuum
+COPIED = "copied"       #: another database's rows, rendered into SQLite
+
+
+def snapshot_database(settings: Settings, destination: Path) -> str:
+    """Copy the database, and report which kind of copy it managed.
 
     `VACUUM INTO` is the way to do this while a lecture is running: it reads
     through a normal transaction, so a session carries on around it, where
@@ -116,11 +145,17 @@ def snapshot_database(settings: Settings, destination: Path) -> bool:
     The caller is told which kind it got, because the difference decides what
     the archive can be used for.
     """
-    source = sqlite_path(settings)
+    try:
+        source = sqlite_path(settings)
+    except NotSupported:
+        # Not a SQLite deployment: render it into one. See the note there.
+        snapshot_other_database(settings, destination)
+        return COPIED
+
     connection = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
     try:
         connection.execute("VACUUM INTO ?", (str(destination),))
-        return True
+        return VACUUMED
     except sqlite3.DatabaseError as e:
         log.warning("VACUUM INTO failed (%s); falling back to a raw copy", e)
     finally:
@@ -131,7 +166,7 @@ def snapshot_database(settings: Settings, destination: Path) -> bool:
         sidecar = source.with_name(source.name + suffix)
         if sidecar.is_file():
             shutil.copyfile(sidecar, destination.with_name(destination.name + suffix))
-    return False
+    return RAW
 
 
 def integrity_report(settings: Settings, limit: int = 20) -> dict:
@@ -178,7 +213,7 @@ def build(settings: Settings, workspace: Path) -> Path:
     # and naming the snapshot after the source makes the two collide the
     # moment the workspace and the data directory are the same place.
     database = workspace / f"snapshot-{secrets.token_hex(8)}.db"
-    consistent = snapshot_database(settings, database)
+    kind = snapshot_database(settings, database)
 
     data = Path(settings.data_dir)
     images = sorted(p for p in (data / "images").glob("*") if p.is_file())
@@ -186,7 +221,7 @@ def build(settings: Settings, workspace: Path) -> Path:
 
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
         bundle.write(database, "quizbinf.db")
-        if not consistent:
+        if kind == RAW:
             # The raw copy's write-ahead log holds the commits that are not in
             # the database file yet; a recovery without it silently loses them.
             for suffix in ("-wal", "-shm"):
@@ -206,7 +241,7 @@ def build(settings: Settings, workspace: Path) -> Path:
                 database.stat().st_size,
                 len(images),
                 config.is_file(),
-                consistent,
+                kind,
             ),
         )
 
@@ -220,7 +255,7 @@ def _readme(
     db_bytes: int,
     image_count: int,
     had_config: bool,
-    consistent: bool = True,
+    kind: str = VACUUMED,
 ) -> str:
     config_line = (
         "quizbinf.env  the configuration, with every secret value replaced by a\n"
@@ -240,7 +275,7 @@ Participants view: keep it somewhere only you can read, and delete copies you
 no longer need.
 
   quizbinf.db   the whole database. {db_bytes:,} bytes.
-{_database_note(consistent)}
+{_database_note(kind)}
   images/       {image_count} uploaded figure(s). Questions reference these by
                 path, so a database restored without them shows broken images.
   {config_line}
@@ -260,8 +295,20 @@ when you need it.
 """
 
 
-def _database_note(consistent: bool) -> str:
-    if consistent:
+def _database_note(kind: str) -> str:
+    if kind == COPIED:
+        return (
+            "                This deployment's database is not SQLite. What is here is\n"
+            "                every row of it, copied table by table into a SQLite file so\n"
+            "                that the archive stays portable: openable by anyone,\n"
+            "                checkable with PRAGMA integrity_check, restorable onto either\n"
+            "                backend, and needing no pg_dump of a matching version.\n"
+            "                It carries the tables this application defines and nothing\n"
+            "                else — no roles, no grants, no objects outside the ORM — so\n"
+            "                it is NOT a substitute for a dump taken on the database host.\n"
+            "                It is the portable copy of the data that cannot be recreated."
+        )
+    if kind == VACUUMED:
         return (
             "                Taken with SQLite's VACUUM INTO, so it is a consistent copy\n"
             "                rather than a possibly torn file."

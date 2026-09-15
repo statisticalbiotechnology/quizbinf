@@ -58,6 +58,12 @@ def log_startup_summary() -> None:
     log.info(
         "database: %s", url if url.startswith("sqlite") else url.split("://", 1)[0] + "://…"
     )
+    if _database_crosses_a_network_unencrypted(url):
+        log.warning(
+            "DATABASE_URL reaches a remote host with no TLS: every student name, "
+            "answer and the database password itself cross the network in clear. "
+            "Add ?sslmode=require (or verify-full, with a CA) to the URL."
+        )
 
     log.info("environment=%s mock_login=%s", s.environment, s.mock_login)
     if s.mock_login_allowed:
@@ -306,6 +312,33 @@ async def write_queue_timeout(request: Request, exc: WriteQueueTimeout) -> JSONR
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         headers={"Retry-After": "1"},
     )
+
+
+def _database_crosses_a_network_unencrypted(url: str) -> bool:
+    """A remote database, reached without TLS.
+
+    Worth a warning rather than a refusal: the same URL shape is right for a
+    Postgres container beside the app in `docker-compose`, where there is no
+    network to cross and no certificate to present, and refusing there would
+    break local development for a risk that does not exist.
+
+    What it is not fine for is the deployment this app is moving to — an
+    application on SciLifeLab Serve talking to a database on another host.
+    That connection carries every student's name and answer, and the database
+    password with them, so unencrypted it is both a privacy problem and a
+    credential leak. SQLite never crosses a network; localhost does not
+    either.
+    """
+    if url.startswith("sqlite"):
+        return False
+    if "sslmode=" in url or "ssl=" in url:
+        return False
+    after_scheme = url.split("://", 1)[-1]
+    host = after_scheme.split("@")[-1].split("/")[0].split("?")[0]
+    hostname = host.split(":")[0]
+    # A unix socket (host= in the query) or a loopback address stays on the
+    # machine, so there is nothing to encrypt.
+    return hostname not in ("", "localhost", "127.0.0.1", "::1", "db")
 
 
 # Identifies this process across requests. Two different values coming back

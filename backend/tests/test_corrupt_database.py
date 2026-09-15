@@ -99,9 +99,9 @@ def test_a_backup_of_a_damaged_database_still_produces_the_bytes(tmp_path, setti
     _corrupt(database)
 
     destination = tmp_path / "snapshot.db"
-    consistent = backup.snapshot_database(settings_for(database), destination)
+    kind = backup.snapshot_database(settings_for(database), destination)
 
-    assert consistent is False, "a damaged database cannot yield a clean snapshot"
+    assert kind == backup.RAW, "a damaged database cannot yield a clean snapshot"
     assert destination.is_file()
     assert destination.stat().st_size == database.stat().st_size
 
@@ -110,7 +110,7 @@ def test_a_healthy_backup_says_it_is_consistent(tmp_path, settings_for):
     database = tmp_path / "healthy.db"
     _populate(database)
     destination = tmp_path / "snapshot.db"
-    assert backup.snapshot_database(settings_for(database), destination) is True
+    assert backup.snapshot_database(settings_for(database), destination) == backup.VACUUMED
     assert sqlite3.connect(destination).execute("SELECT count(*) FROM answers").fetchone() == (400,)
 
 

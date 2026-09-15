@@ -806,3 +806,26 @@ def test_the_write_gate_still_applies_to_sqlite():
         db.close()
 
     assert taken == [False], "the write gate was not held while writing()"
+
+
+def test_a_remote_database_without_tls_is_called_out():
+    """The connection to heisenberg carries every student's name and answer.
+
+    Unencrypted it is both a privacy problem and a credential leak — the
+    database password crosses in clear with the rows. A warning rather than a
+    refusal, because the same URL shape is correct for the Postgres container
+    beside the app in docker-compose, where there is no network to cross.
+    """
+    remote = "postgresql+psycopg://quizbinf:pw@heisenberg.scilifelab.se:5432/quizbinf"
+    assert main._database_crosses_a_network_unencrypted(remote)
+
+    with_tls = remote + "?sslmode=require"
+    assert not main._database_crosses_a_network_unencrypted(with_tls)
+
+    for harmless in (
+        "sqlite:////home/data/quizbinf.db",
+        "postgresql+psycopg://u:p@localhost:5432/quizbinf",
+        "postgresql+psycopg://u:p@127.0.0.1:5432/quizbinf",
+        "postgresql+psycopg://u:p@db:5432/quizbinf",  # the compose service name
+    ):
+        assert not main._database_crosses_a_network_unencrypted(harmless), harmless
