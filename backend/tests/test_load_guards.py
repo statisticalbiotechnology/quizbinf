@@ -16,12 +16,13 @@ within a month.
 import asyncio
 import inspect
 import time
+from pathlib import Path
 
 from sqlalchemy import text
 
 from app import main
 from app.auth import COOKIE_NAME, current_user
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app import db as db_module
 from app import service
 from app.db import (
@@ -829,3 +830,52 @@ def test_a_remote_database_without_tls_is_called_out():
         "postgresql+psycopg://u:p@db:5432/quizbinf",  # the compose service name
     ):
         assert not main._database_crosses_a_network_unencrypted(harmless), harmless
+
+
+def test_health_does_no_filesystem_work_on_every_request():
+    """The endpoint that must answer during a freeze must not touch the volume.
+
+    `/api/health` reports whether the data directory is writable, and finding
+    that out costs a mkdir, a touch and an unlink — three round trips to a
+    network filesystem, on the volume most likely to *be* the thing that is
+    stuck. Measured against the deployment with a single client and nothing
+    else running, `/api/health` reached 1.4 s while a static file on the same
+    host never passed 0.2 s.
+
+    Cached with a short expiry rather than once at startup, because a volume
+    that goes read-only mid-lecture is exactly what this exists to report.
+    """
+    settings = get_settings()
+    settings.__dict__.pop("_writability", None)
+
+    calls = []
+    real_touch = Path.touch
+
+    def counted(self, *args, **kwargs):
+        calls.append(self)
+        return real_touch(self, *args, **kwargs)
+
+    Path.touch = counted
+    try:
+        for _ in range(20):
+            settings._writable_data_dir()
+    finally:
+        Path.touch = real_touch
+
+    assert len(calls) == 1, f"probed the filesystem {len(calls)} times for 20 calls"
+
+
+def test_a_volume_that_goes_read_only_is_still_noticed(monkeypatch):
+    """The cache must expire, or the reading stops meaning anything."""
+    settings = get_settings()
+    settings.__dict__.pop("_writability", None)
+    assert settings._writable_data_dir() is not None
+
+    monkeypatch.setattr(Settings, "WRITABILITY_TTL", 0.0)
+
+    def refuse(self, *args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(Path, "touch", refuse)
+    assert settings._writable_data_dir() is None
+    settings.__dict__.pop("_writability", None)

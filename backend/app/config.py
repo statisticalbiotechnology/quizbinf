@@ -1,8 +1,10 @@
 import logging
 import os
 import secrets
+import time
 from functools import cached_property, lru_cache
 from pathlib import Path
+from typing import ClassVar
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -203,17 +205,43 @@ class Settings(BaseSettings):
         """
         return self.roster_login and bool(self.roster_teacher_password)
 
+    #: How long a writability answer is reused. See `_writable_data_dir`.
+    WRITABILITY_TTL: ClassVar[float] = 30.0
+
     def _writable_data_dir(self) -> Path | None:
-        """The data directory, if we can actually write to it."""
+        """The data directory, if we can actually write to it.
+
+        Answered from a cache for `WRITABILITY_TTL` seconds, because finding
+        out costs a `mkdir`, a `touch` and an `unlink` — three round trips to
+        a network filesystem — and `GET /api/health` asks on **every request**.
+        That is the endpoint that has to keep answering while everything else
+        is stuck, so it had no business doing filesystem I/O at all, let alone
+        on the volume most likely to be the thing that is stuck. Measured
+        against the deployment with a single client and nothing else running,
+        `/api/health` reached 1.4 s while a static file on the same host never
+        passed 0.2 s.
+
+        Cached with a short expiry rather than once at startup: a volume that
+        goes read-only mid-lecture is exactly what this is here to report, so
+        the answer has to be able to change. Thirty seconds is far longer than
+        a burst of health checks and far shorter than anybody's patience.
+        """
+        now = time.monotonic()
+        cached = getattr(self, "_writability", None)
+        if cached is not None and now - cached[0] < self.WRITABILITY_TTL:
+            return cached[1]
+
         path = Path(self.data_dir)
         try:
             path.mkdir(parents=True, exist_ok=True)
             probe = path / ".write-test"
             probe.touch()
             probe.unlink()
-            return path
+            answer = path
         except OSError:
-            return None
+            answer = None
+        object.__setattr__(self, "_writability", (now, answer))
+        return answer
 
     @property
     def resolved_database_url(self) -> str:

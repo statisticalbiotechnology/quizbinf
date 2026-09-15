@@ -257,13 +257,7 @@ def write_path(fn):
 
 
 def engine_options(url: str) -> dict:
-    """The keyword arguments `create_engine` gets for this database URL.
-
-    Also settles whether writes are serialised in this process, since that is
-    the same question as which backend this is — see `_serialise_writes`.
-    """
-    global _serialise_writes
-    _serialise_writes = url.startswith("sqlite")
+    """The keyword arguments `create_engine` gets for this database URL."""
     kwargs = {
         "pool_timeout": POOL_TIMEOUT,
         "pool_size": POOL_SIZE,
@@ -289,6 +283,15 @@ def engine_options(url: str) -> dict:
 def _make_engine():
     url = get_settings().resolved_database_url
     sqlite = url.startswith("sqlite")
+
+    # Whether `writing()` serialises. Set here rather than in
+    # `engine_options`, which is a question-answering function that callers —
+    # including tests — ask about URLs this process is not using: putting the
+    # assignment there meant merely *inspecting* the options for a Postgres
+    # URL silently turned the gate off for everything afterwards.
+    global _serialise_writes
+    _serialise_writes = sqlite
+
     engine = create_engine(url, **engine_options(url))
     if sqlite:
 
