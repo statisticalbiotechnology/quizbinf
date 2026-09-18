@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, Request, Response, status
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import Settings, get_settings
@@ -136,6 +137,29 @@ def _already_current(user: User | None, display_name: str, role: Role) -> bool:
     )
 
 
+def _create_user(db: Session, username: str, display_name: str, role: Role) -> User:
+    """Insert the row for a student who has never signed in, or find the one
+    another request inserted a moment ago.
+
+    A student's phone opens the page and its live stream together, and on the
+    first login of a lecture neither has a row yet: on Postgres, where writers
+    are no longer serialised in this process, both insert and the unique index
+    on `username` refuses one of them. That refusal must not become a 500 at
+    the exact moment a class signs in, and the row the winner wrote is the row
+    this student wanted, so losing the race means reading it back.
+    """
+    user = User(username=username, display_name=display_name, role=role)
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        user = db.scalar(select(User).where(User.username == username))
+        if user is None:  # pragma: no cover - the constraint says it is there
+            raise
+    return user
+
+
 def get_or_create_user(db: Session, username: str, display_name: str, settings: Settings) -> User:
     """Sign in `username`, creating or correcting the row only if it needs it.
 
@@ -173,13 +197,11 @@ def get_or_create_user(db: Session, username: str, display_name: str, settings: 
     with writing(db):
         user = db.scalar(select(User).where(User.username == username))
         if user is None:
-            user = User(username=username, display_name=display_name, role=role)
-            db.add(user)
-        else:
-            # The teacher allowlist in config is authoritative on every login.
-            user.role = role
-            if display_name:
-                user.display_name = display_name
+            return _create_user(db, username, display_name, role)
+        # The teacher allowlist in config is authoritative on every login.
+        user.role = role
+        if display_name:
+            user.display_name = display_name
         # No `refresh` afterwards. The commit populates a new row's primary
         # key, and the sessionmaker sets `expire_on_commit=False` so every
         # attribute stays readable — so a refresh was a second transaction,

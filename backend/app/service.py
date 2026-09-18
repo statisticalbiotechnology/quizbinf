@@ -13,7 +13,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .db import write_path, writing
+from .db import insert_ignoring_conflict, write_path, writing
 from .models import (
     Answer,
     Choice,
@@ -45,6 +45,14 @@ def open_round(db: Session, session: QuizSession, question: Question, phase: Pha
     """
     if question.quiz_id != session.quiz_id:
         raise RuleViolation("Question does not belong to this session's quiz")
+    # Lock the session for the length of this decision. Without the write gate
+    # two clicks a moment apart — a teacher's double tap, or the projected view
+    # and the phone remote — could both read "nothing open" and open a round
+    # each. Two open rounds is worse than a refused click: `get_open_round`
+    # expects at most one and would raise for everyone in the session, mid
+    # question. Postgres holds the lock until this transaction ends; SQLite
+    # ignores it and has the gate.
+    db.execute(select(QuizSession.id).where(QuizSession.id == session.id).with_for_update())
     if get_open_round(db, session) is not None:
         raise RuleViolation("Another round is already open in this session")
     existing = db.scalar(
@@ -92,23 +100,49 @@ def get_open_round(db: Session, session: QuizSession) -> Round | None:
 @write_path
 def submit_answer(db: Session, round_: Round, user: User, choice: Choice) -> Answer:
     """Record `user`'s answer; one answer per user per round, last write wins
-    while the round is open."""
-    if not round_.is_open:
-        raise RuleViolation("This round is closed")
+    while the round is open.
+
+    On Postgres this runs alongside every other answer in the room, so the two
+    things the write gate used to guarantee are arranged here instead:
+
+    * **The round cannot close underneath it.** The round is re-read holding a
+      share lock on its row, which `close_round` must update and therefore
+      waits for; an answer arriving after the close has committed re-reads it
+      as closed and is refused. The submission window is the attendance guard,
+      so it has to hold to the commit and not merely to the check. The re-read
+      matters on SQLite too: the caller loaded `round_` before this queued for
+      the gate, and it may have closed in between.
+    * **The same student may arrive twice at once** — a phone re-sending after
+      a 502 while the first attempt is still in flight. Both find no row and
+      both insert; the unique constraint refuses one, and that one runs again
+      and updates the row the winner wrote.
+    """
     if choice.question_id != round_.question_id:
         raise RuleViolation("Choice does not belong to the round's question")
-    answer = db.scalar(
-        select(Answer).where(Answer.round_id == round_.id, Answer.user_id == user.id)
-    )
-    if answer is None:
-        answer = Answer(round_id=round_.id, user_id=user.id, choice_id=choice.id)
-        db.add(answer)
-    else:
-        answer.choice_id = choice.id
-        answer.submitted_at = utcnow()
-    db.commit()
-    db.refresh(answer)
-    return answer
+    for attempt in range(2):
+        db.refresh(round_, with_for_update={"read": True})
+        if not round_.is_open:
+            raise RuleViolation("This round is closed")
+        answer = db.scalar(
+            select(Answer).where(Answer.round_id == round_.id, Answer.user_id == user.id)
+        )
+        if answer is None:
+            answer = Answer(round_id=round_.id, user_id=user.id, choice_id=choice.id)
+            db.add(answer)
+        else:
+            answer.choice_id = choice.id
+            answer.submitted_at = utcnow()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Lost to the student's own other request. Start again: the second
+            # pass finds the row and updates it.
+            db.rollback()
+            if attempt:
+                raise
+            continue
+        db.refresh(answer)
+        return answer
 
 
 #: How stale `last_seen_at` may get before it is worth a write.
@@ -170,17 +204,23 @@ def record_participant(db: Session, session: QuizSession, user: User) -> None:
                 participant.last_seen_at = utcnow()
             db.commit()
             return
-        db.add(SessionParticipant(session_id=session.id, user_id=user.id))
-        try:
-            db.commit()
-        except IntegrityError:
-            # A student's first load fetches the state and opens the SSE
-            # stream at almost the same moment. The write lock makes that race
-            # impossible within one process, but not against a second one — an
-            # Alembic step, a shell, a future replica. Losing it is not an
-            # error, the row exists; letting it raise would 500 exactly when a
-            # student joins.
-            db.rollback()
+        # A student's first load fetches the state and opens the SSE stream at
+        # almost the same moment, so two requests reach this line together and
+        # one of them loses. Losing is not an error — the row exists, which is
+        # all this function wanted — so the insert is written to do nothing on
+        # conflict rather than to be refused and rolled back. Under the write
+        # gate the race could not happen inside one process; on Postgres,
+        # where the gate is off, the deployment logged one refusal per student
+        # joining a lecture.
+        insert_ignoring_conflict(
+            db,
+            SessionParticipant,
+            session_id=session.id,
+            user_id=user.id,
+            joined_at=utcnow(),
+            last_seen_at=utcnow(),
+        )
+        db.commit()
 
 
 #: Mirrors `routers.auth.LOADTEST_PREFIX`. Defined here rather than imported

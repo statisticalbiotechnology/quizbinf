@@ -237,6 +237,31 @@ quizbinf/
   genuinely something to write — re-reading inside the write transaction,
   because the row may have appeared in between.
 
+  **On Postgres the gate does not serialise, so declaring a write path is no
+  longer enough on its own.** `writing()` still bounds the transaction, but
+  two calls to it run side by side, and every read-then-write in this app is a
+  check that another request can invalidate before the commit. The deployment
+  said so on its first lecture on Postgres: one `duplicate key ...
+  uq_participant_per_session` per student joining, each a race the join path
+  already tolerated. So a path that reads, decides and writes has to pick one:
+
+  - **Lock what the decision rests on.** `submit_answer` re-reads its round
+    `with_for_update(read=True)`, which `close_round` must wait for, so the
+    submission window still holds at the commit and not merely at the check.
+    `open_round` locks the session row, because two rounds open at once would
+    make `get_open_round` raise for everyone in the room.
+  - **Or expect to lose and recover.** `get_or_create_user` reads back the row
+    the winner wrote, rather than turning the first login of a lecture into a
+    500. `record_participant` inserts with `on_conflict_do_nothing`, since it
+    wants the row to exist and does not care who wrote it — and a refusal per
+    student is an ERROR line per student in the database log.
+
+  `tests/test_concurrent_writes.py` pins both halves: three tests drive the
+  losing side directly on SQLite, and one runs a class of threads against a
+  real Postgres when `QUIZBINF_TEST_POSTGRES_URL` is set. Against the code
+  before these fixes that last one fails with the same unique violations the
+  deployment logged.
+
   Missing a write path is the failure this is all about, so `db.py` notices
   one: an INSERT/UPDATE/DELETE outside `writing()` logs a warning in
   production and **raises in the test suite** (`conftest.py` swaps the

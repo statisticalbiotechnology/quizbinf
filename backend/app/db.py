@@ -256,6 +256,40 @@ def write_path(fn):
     return wrapper
 
 
+def serialises_writes() -> bool:
+    """Whether `writing()` still hands the database to one writer at a time.
+
+    False on Postgres, and that is what every read-then-write in this app has
+    to answer for: the check and the write are no longer alone. A path that
+    reads, decides and then writes must either lock what it read or expect to
+    lose the race and cope, and which of the two is a per-path decision. The
+    deployment's log is what asked the question — a lecture on Postgres logged
+    one duplicate-key error per student joining, each a lost race the join
+    path already handled.
+    """
+    return _serialise_writes
+
+
+def insert_ignoring_conflict(db: Session, model, **values) -> None:
+    """INSERT a row, doing nothing if it is already there.
+
+    For rows whose existence is the whole point and whose contents nobody
+    races over — a participant's first row in a session. The alternative,
+    letting the constraint refuse and catching it, works, but every refusal is
+    an ERROR in the database's log, and a log that cries wolf once per student
+    is one nobody reads at the next real failure.
+    """
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as _insert
+    elif dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as _insert
+    else:  # pragma: no cover - the app runs on exactly these two
+        db.add(model(**values))
+        return
+    db.execute(_insert(model).values(**values).on_conflict_do_nothing())
+
+
 def engine_options(url: str) -> dict:
     """The keyword arguments `create_engine` gets for this database URL."""
     kwargs = {
