@@ -13,6 +13,9 @@ What goes in, and why:
 * **The uploaded figures.** Questions reference them by path; a database
   restored without them renders questions with broken images.
 * **The configuration**, with secrets removed — see below.
+* **The CA certificate the database URL verifies against**, if there is one.
+  Under `sslmode=verify-full` the app cannot open a connection without it, so
+  leaving it out turns a restore into a deployment that will not start.
 
 What is deliberately left out: nothing else on the volume is anything but
 derived state.
@@ -24,8 +27,10 @@ import secrets
 import shutil
 import sqlite3
 import zipfile
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import parse_qsl, urlsplit
 
 from .config import Settings
 
@@ -84,6 +89,41 @@ def sqlite_path(settings: Settings) -> Path:
     if not url.startswith("sqlite"):
         raise NotSupported(f"this deployment's database is {url.split('://')[0]}")
     return Path(url.split("sqlite:///", 1)[-1])
+
+
+#: Files the database URL points at that the app cannot start without, and
+#: that are safe to publish. A CA certificate is a public document — it exists
+#: precisely so that clients can be handed it — and `sslcrl` is the same kind
+#: of thing. `sslcert`/`sslkey` are deliberately not here: the key is a
+#: credential, and the rule that keeps the Canvas token out of this archive
+#: keeps a private key out of it too.
+TLS_KEYS = ("sslrootcert", "sslcrl")
+
+
+def tls_files(settings: Settings) -> list[Path]:
+    """The certificate material the database URL names, if it is on disk.
+
+    `sslmode=verify-full` is fail-closed by design: libpq checks the server's
+    certificate against `sslrootcert` and refuses to connect if it does not
+    verify. That is the right setting for a database on another host, and it
+    quietly made a file on the volume into a startup dependency — one that
+    lived nowhere else and was in no backup. Restoring the database onto a
+    fresh volume would have produced an app that could not open a connection
+    at all, discovered at the moment somebody was restoring from a backup.
+
+    So it travels with the archive. It is a certificate, not a secret; what
+    would be a secret is a client key, which is why only the public half is
+    collected here.
+    """
+    query = urlsplit(settings.resolved_database_url).query
+    found: list[Path] = []
+    for key, value in parse_qsl(query):
+        if key not in TLS_KEYS or not value:
+            continue
+        path = Path(value)
+        if path.is_file() and path.resolve() not in {p.resolve() for p in found}:
+            found.append(path)
+    return found
 
 
 def snapshot_other_database(settings: Settings, destination: Path) -> None:
@@ -218,6 +258,7 @@ def build(settings: Settings, workspace: Path) -> Path:
     data = Path(settings.data_dir)
     images = sorted(p for p in (data / "images").glob("*") if p.is_file())
     config = data / "quizbinf.env"
+    certificates = tls_files(settings)
 
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
         bundle.write(database, "quizbinf.db")
@@ -230,6 +271,8 @@ def build(settings: Settings, workspace: Path) -> Path:
                     bundle.write(sidecar, f"quizbinf.db{suffix}")
         for image in images:
             bundle.write(image, f"images/{image.name}")
+        for certificate in certificates:
+            bundle.write(certificate, certificate.name)
         if config.is_file():
             bundle.writestr(
                 "quizbinf.env", redact_config(config.read_text(encoding="utf-8"))
@@ -242,6 +285,7 @@ def build(settings: Settings, workspace: Path) -> Path:
                 len(images),
                 config.is_file(),
                 kind,
+                certificates,
             ),
         )
 
@@ -256,6 +300,7 @@ def _readme(
     image_count: int,
     had_config: bool,
     kind: str = VACUUMED,
+    certificates: Sequence[Path] = (),
 ) -> str:
     config_line = (
         "quizbinf.env  the configuration, with every secret value replaced by a\n"
@@ -265,6 +310,17 @@ def _readme(
         if had_config
         else "quizbinf.env  not present — this deployment is configured by environment\n"
         "              variables rather than by a file on the volume.\n"
+    )
+    certificate_note = _certificate_note(certificates)
+    restore = (
+        "To restore, put quizbinf.db and images/ into the new deployment's data\n"
+        "directory (/home/data by default), put each certificate listed above back\n"
+        "at the path named for it, fill in the secrets in quizbinf.env, and start\n"
+        "the app."
+        if certificates
+        else "To restore, put quizbinf.db and images/ into the new deployment's data\n"
+        "directory (/home/data by default), fill in the secrets in quizbinf.env, and\n"
+        "start the app."
     )
     return f"""quizbinf backup
 taken {taken:%Y-%m-%d %H:%M} UTC
@@ -278,10 +334,8 @@ no longer need.
 {_database_note(kind)}
   images/       {image_count} uploaded figure(s). Questions reference these by
                 path, so a database restored without them shows broken images.
-  {config_line}
-To restore, put quizbinf.db and images/ into the new deployment's data
-directory (/home/data by default), fill in the secrets in quizbinf.env, and
-start the app. It runs `alembic upgrade head` at startup, so a snapshot from an
+  {config_line}{certificate_note}
+{restore} It runs `alembic upgrade head` at startup, so a snapshot from an
 older version migrates itself forward.
 
 What this does NOT protect against: it is a copy you took by hand at one
@@ -325,3 +379,27 @@ def _database_note(kind: str) -> str:
         "                    sqlite3 rescued.db < rescued.sql\n"
         "                Then run PRAGMA integrity_check on rescued.db before using it."
     )
+
+
+def _certificate_note(certificates: Sequence[Path]) -> str:
+    """Name each certificate and the path it has to go back to.
+
+    The path matters more than the file: `DATABASE_URL` names it absolutely,
+    so a restore that puts the certificate somewhere else is a deployment that
+    cannot open a connection, with nothing in the log about a backup.
+    """
+    if not certificates:
+        return ""
+    lines = []
+    for certificate in certificates:
+        lines.append(
+            f"  {certificate.name}\n"
+            "                the CA certificate this deployment's database connection is\n"
+            "                verified against. It belongs at\n"
+            f"                {certificate}\n"
+            "                which is the path DATABASE_URL names. It is a public\n"
+            "                certificate and not a secret, but it IS required: under\n"
+            "                sslmode=verify-full the app refuses to connect without it,\n"
+            "                so a restore that leaves it behind will not start.\n"
+        )
+    return "".join(lines)

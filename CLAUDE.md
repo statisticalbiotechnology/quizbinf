@@ -702,6 +702,19 @@ URL so the QR code resolves. See the README.
   restore-everything-including-credentials bundle is ever wanted, it needs to
   be a deliberate, separately-argued opt-in.
 
+  **The CA certificate the database URL verifies against travels with the
+  archive**, and it is the exception that proves the rule above: it is a
+  public document, not a credential, and it is *required* to start. Pointing
+  `DATABASE_URL` at another host with `sslmode=verify-full` is fail-closed by
+  design — libpq refuses the connection if the certificate does not verify —
+  which quietly turned a file on the volume into a startup dependency that
+  existed nowhere else. A restore onto a fresh volume would have produced an
+  app unable to open its database at all, discovered by somebody already in
+  the middle of a restore. `backup.tls_files` collects what the URL names, the
+  README says which absolute path each one has to go back to, and `sslcert`/
+  `sslkey` are deliberately excluded: the key is a credential, so the
+  redaction rule covers it.
+
   **A damaged database is the case the backup exists for, so it must not be
   the case the backup refuses.** `VACUUM INTO` reads every page, which makes
   it the first thing to fail on a corrupt file — and the deployment did
