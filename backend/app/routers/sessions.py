@@ -386,6 +386,26 @@ def participation(
     )
 
 
+@router.get("/{code}/canvas-readiness")
+def session_canvas_readiness(
+    code: str,
+    course_id: int | None = None,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """What the Canvas file below will and will not carry.
+
+    Read before the download rather than discovered after the import: Canvas
+    skips a row with no id of its own and says so nowhere the teacher looks.
+
+    Names usernames, so teacher-only and the session's own owner, like every
+    other view on this page.
+    """
+    session = _owned_session(db, code, teacher)
+    return service.canvas_match_summary(db, session, course_id or settings.canvas_course_id)
+
+
 @router.get("/{code}/canvas-participation.csv", include_in_schema=False)
 def session_canvas_participation_csv(
     code: str,

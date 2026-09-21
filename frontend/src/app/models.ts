@@ -173,3 +173,13 @@ export interface QuestionEditInput {
   image_url: string | null;
   choices: ChoiceEditInput[];
 }
+
+/** Whether this lecture's Canvas file can be imported — see api.service. */
+export interface CanvasReadiness {
+  course_id: number;
+  students: number;
+  matched: number;
+  unmatched: string[];
+  roster_students: number;
+  synced_at: string | null;
+}

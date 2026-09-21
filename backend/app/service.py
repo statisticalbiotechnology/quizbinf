@@ -564,6 +564,41 @@ def session_answering(
     return users, answered, len(rounds)
 
 
+def canvas_match_summary(db: Session, session: QuizSession, course_id: int) -> dict:
+    """Whether the Canvas file for this lecture can actually be imported.
+
+    A row with no Canvas id is skipped by Canvas silently, and the file still
+    looks right: 114 rows, every mark filled in. That is how a lecture's
+    attendance went missing — the teacher imported a correct-looking file and
+    found a handful of marks in the gradebook, with nothing anywhere saying
+    which rows Canvas had thrown away.
+
+    So the same counting the export does is available before the download, and
+    the unmatched are named. `synced_at` is the roster's age, the other half of
+    the question: a roster from before the term filled up matches the students
+    who registered early and nobody else.
+    """
+    users, _taken, _chances = session_answering(db, session)
+    roster = {
+        entry.username: entry
+        for entry in db.scalars(
+            select(RosterEntry).where(RosterEntry.course_id == course_id)
+        )
+    }
+    unmatched = sorted(u.username for u in users.values() if u.username not in roster)
+    synced_at = db.scalar(
+        select(func.max(RosterEntry.synced_at)).where(RosterEntry.course_id == course_id)
+    )
+    return {
+        "course_id": course_id,
+        "students": len(users),
+        "matched": len(users) - len(unmatched),
+        "unmatched": unmatched,
+        "roster_students": len(roster),
+        "synced_at": synced_at,
+    }
+
+
 def canvas_participation(
     db: Session,
     teacher: User,

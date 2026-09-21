@@ -5,6 +5,7 @@ import { Observable } from 'rxjs';
 import { API_BASE } from './api.config';
 import {
   CanvasCourse,
+  CanvasReadiness,
   Comparison,
   Draw,
   Histogram,
@@ -257,6 +258,19 @@ export class ApiService {
     return this.http.get<ParticipationReport>(
       `${API_BASE}/api/sessions/${code}/participation`,
       this.opts,
+    );
+  }
+
+  /**
+   * What the Canvas file for this lecture will carry, before downloading it.
+   *
+   * Canvas skips a row with no id of its own and reports nothing the teacher
+   * sees, so the counts belong on the page beside the download button.
+   */
+  sessionCanvasReadiness(code: string): Observable<CanvasReadiness> {
+    return this.http.get<CanvasReadiness>(
+      `${API_BASE}/api/sessions/${code}/canvas-readiness`,
+      { withCredentials: true },
     );
   }
 

@@ -1,8 +1,9 @@
+import { DatePipe } from '@angular/common';
 import { Component, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { ApiService } from '../api.service';
-import { ParticipantRow, Question } from '../models';
+import { CanvasReadiness, ParticipantRow, Question } from '../models';
 import { SessionFeed } from './session-feed.service';
 
 /**
@@ -17,7 +18,7 @@ import { SessionFeed } from './session-feed.service';
 @Component({
   selector: 'app-teacher-session-people',
   standalone: true,
-  imports: [FormsModule],
+  imports: [DatePipe, FormsModule],
   template: `
     <div class="wrap">
       <p class="warning">
@@ -41,6 +42,28 @@ import { SessionFeed } from './session-feed.service';
           Keyed on the ids from the synced roster. Left blank, the column is
           named for this lecture and the date it ran.
         </p>
+        @if (readiness(); as r) {
+          <p class="match" [class.bad]="r.unmatched.length > 0">
+            {{ r.matched }} of {{ r.students }} students carry Canvas ids
+            @if (r.unmatched.length) {
+              — Canvas will <strong>skip</strong> the other
+              {{ r.unmatched.length }}:
+              <span class="who">{{ r.unmatched.join(', ') }}</span>
+            }
+            <br />
+            Roster for course {{ r.course_id }}:
+            {{ r.roster_students }} students,
+            @if (r.synced_at) {
+              synced {{ r.synced_at | date: 'd MMM y' }}.
+            } @else {
+              never synced.
+            }
+            @if (!r.roster_students) {
+              <strong>Nothing is synced for this course, so Canvas will skip
+              every row.</strong> Sync the roster first.
+            }
+          </p>
+        }
         <div class="row">
           <label>
             Assignment
@@ -67,7 +90,11 @@ import { SessionFeed } from './session-feed.service';
         </div>
         <p class="note">
           In Canvas: Grades → Actions → Import, upload it, and let it create
-          the assignment when it asks about the unrecognised column.
+          the assignment when it asks about the unrecognised column. Do not
+          open the file in Excel first — saving it again can change the
+          separator, and Canvas then refuses the whole file. Afterwards check
+          the assignment is <em>published</em>: an unpublished one holds the
+          marks and shows nothing.
         </p>
       </details>
 
@@ -131,6 +158,9 @@ import { SessionFeed } from './session-feed.service';
       .canvas .row { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
       .canvas label { font-size: 0.9rem; }
       .canvas .pct { width: 4rem; }
+      .canvas .match { font-size: 0.85rem; margin: 0.5rem 0; color: #2c7; }
+      .canvas .match.bad { color: #b9770e; }
+      .canvas .match .who { font-family: monospace; word-break: break-all; }
       .csv { padding: 0.5rem 0.9rem; border: 1px solid var(--border); border-radius: 6px;
              text-decoration: none; }
       table { border-collapse: collapse; width: 100%; }
@@ -149,6 +179,7 @@ import { SessionFeed } from './session-feed.service';
 })
 export class TeacherSessionPeopleComponent implements OnInit {
   rows = signal<ParticipantRow[]>([]);
+  readiness = signal<CanvasReadiness | null>(null);
   questions = signal<Question[]>([]);
   revealed = signal(false);
   csvUrl = '';
@@ -164,6 +195,12 @@ export class TeacherSessionPeopleComponent implements OnInit {
     this.api.participation(this.feed.code()).subscribe((r) => {
       this.questions.set(r.questions);
       this.rows.set(r.rows);
+    });
+    this.api.sessionCanvasReadiness(this.feed.code()).subscribe({
+      next: (r) => this.readiness.set(r),
+      // Not worth an error on this page: the download still works, and the
+      // counts are a warning, not the feature.
+      error: () => this.readiness.set(null),
     });
   }
 

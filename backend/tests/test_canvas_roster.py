@@ -12,7 +12,7 @@ from app import canvas, service
 from app.config import get_settings
 from app.db import SessionLocal
 from app.models import RosterEntry, User
-from tests.conftest import login
+from tests.conftest import login, make_quiz_with_question
 
 
 def canvas_user(canvas_id: int, username: str, kthid: str | None = "u1abcdef", **extra) -> dict:
@@ -302,3 +302,66 @@ def test_a_canvas_outage_is_a_502_not_a_500(teacher_client, monkeypatch, mock_ca
     resp = teacher_client.post("/api/roster/sync?course_id=1")
     assert resp.status_code == 502
     assert "access token" in resp.json()["detail"]
+
+
+# --- what the teacher is told before importing -----------------------------
+
+
+def test_the_page_says_how_many_students_canvas_will_accept(teacher_client, make_client):
+    """The count the teacher needs *before* importing, not after.
+
+    A row without a Canvas id is dropped by the import and reported nowhere
+    the teacher looks: a lecture's attendance went missing that way, from a
+    file that looked complete — 114 rows, every mark filled in.
+    """
+    quiz_id, question_id, choice_ids = make_quiz_with_question(teacher_client)
+    code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
+    round_id = teacher_client.post(
+        f"/api/sessions/{code}/rounds", json={"question_id": question_id, "phase": "pre"}
+    ).json()["id"]
+    for name in ("inroster", "notinroster"):
+        student = make_client()
+        login(student, name)
+        assert student.post(
+            f"/api/sessions/{code}/answers", json={"choice_id": choice_ids[0]}
+        ).status_code == 200
+    teacher_client.post(f"/api/sessions/{code}/rounds/{round_id}/close")
+
+    db = SessionLocal()
+    service.sync_roster(
+        db,
+        _teacher(db),
+        63598,
+        [{"canvas_user_id": 4242, "kthid": "u1abcdef", "username": "inroster",
+          "display_name": "In Roster"}],
+    )
+    db.close()
+
+    body = teacher_client.get(
+        f"/api/sessions/{code}/canvas-readiness?course_id=63598"
+    ).json()
+    assert body["students"] == 2
+    assert body["matched"] == 1
+    assert body["unmatched"] == ["notinroster"]
+    assert body["roster_students"] == 1
+    assert body["synced_at"]
+
+
+def test_readiness_counts_nothing_matched_when_no_roster_is_synced(teacher_client):
+    """The case that cost a lecture: a correct-looking file every row of which
+    Canvas would skip."""
+    quiz_id, _, _ = make_quiz_with_question(teacher_client)
+    code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
+    body = teacher_client.get(f"/api/sessions/{code}/canvas-readiness").json()
+    assert body["roster_students"] == 0
+    assert body["matched"] == 0
+    assert body["synced_at"] is None
+
+
+def test_canvas_readiness_is_for_the_session_s_own_teacher(teacher_client, make_client):
+    """Usernames are personal data, like everything else on that page."""
+    quiz_id, _, _ = make_quiz_with_question(teacher_client)
+    code = teacher_client.post(f"/api/sessions?quiz_id={quiz_id}").json()["code"]
+    other = make_client()
+    login(other, "someone-else")
+    assert other.get(f"/api/sessions/{code}/canvas-readiness").status_code in (403, 404)
