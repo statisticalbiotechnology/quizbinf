@@ -39,6 +39,7 @@ describe('ApiService', () => {
       open_round: null,
       question: null,
       my_choice_id: null,
+      my_text: null,
     };
     let received: SessionState | undefined;
     api.sessionState('abc123').subscribe((s) => (received = s));

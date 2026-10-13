@@ -30,6 +30,7 @@ function question(id: number, position: number): Question {
     text: `q${id}`,
     text_html: `<p>q${id}</p>`,
     image_url: null,
+    kind: 'choice',
     choices: choices('right', 'wrong'),
   };
 }
@@ -70,6 +71,7 @@ describe('SessionFeed projection rules', () => {
       open_round: openRound(1, 'pre'),
       question: q1,
       my_choice_id: null,
+      my_text: null,
     });
 
     expect(feed.ran(q1, 'pre')).toBeFalse();
@@ -90,6 +92,7 @@ describe('SessionFeed projection rules', () => {
       open_round: openRound(2, 'pre'),
       question: q2,
       my_choice_id: null,
+      my_text: null,
     });
 
     expect(feed.currentQuestion()?.id).toBe(2);
@@ -122,6 +125,7 @@ describe('SessionFeed projection rules', () => {
       open_round: openRound(1, 'pre'),
       question: q1,
       my_choice_id: null,
+      my_text: null,
     });
     expect(feed.started()).toBeTrue();
   });
