@@ -2,6 +2,7 @@ import { Component, EventEmitter, Input, OnDestroy, Output, signal } from '@angu
 import { FormsModule } from '@angular/forms';
 
 import { ApiService } from '../api.service';
+import { QuestionKind } from '../models';
 
 export interface ChoiceDraft {
   /** Present when this choice already exists; absent means a new one. */
@@ -12,6 +13,8 @@ export interface ChoiceDraft {
 
 export interface QuestionDraft {
   text: string;
+  /** 'choice' is peer instruction; 'text' collects words for a cloud. */
+  kind: QuestionKind;
   choices: ChoiceDraft[];
 }
 
@@ -64,6 +67,40 @@ export interface QuestionDraft {
         </div>
       }
 
+      <div class="kind">
+        <label>
+          <input
+            type="radio"
+            [name]="'kind' + formId"
+            [checked]="draft.kind === 'choice'"
+            (change)="setKind('choice')"
+            [disabled]="lockedKind"
+          />
+          Multiple choice
+        </label>
+        <label>
+          <input
+            type="radio"
+            [name]="'kind' + formId"
+            [checked]="draft.kind === 'text'"
+            (change)="setKind('text')"
+            [disabled]="lockedKind"
+          />
+          Word cloud
+        </label>
+        @if (lockedKind) {
+          <span class="kind-hint">
+            fixed once the question exists — delete and add it again to change
+          </span>
+        } @else if (draft.kind === 'text') {
+          <span class="kind-hint">
+            students write one word or short phrase; asked once, no right
+            answer, shown as a cloud after you halt it
+          </span>
+        }
+      </div>
+
+      @if (draft.kind === 'choice') {
       @for (c of draft.choices; track $index) {
         <div class="choice-row">
           <label class="mark" [class.on]="c.is_correct">
@@ -85,6 +122,7 @@ export interface QuestionDraft {
       }
 
       <button type="button" (click)="addChoiceRow()">+ choice</button>
+      }
       <button (click)="save.emit()" [disabled]="!valid()">{{ submitLabel }}</button>
       @if (showCancel) {
         <button type="button" class="cancel" (click)="cancel.emit()">Cancel</button>
@@ -100,6 +138,10 @@ export interface QuestionDraft {
   `,
   styles: [
     `
+      .kind { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+              margin: 0.5rem 0; font-size: 0.9rem; }
+      .kind label { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
+      .kind-hint { color: #666; font-size: 0.85rem; }
       .choice-row { display: flex; gap: 0.5rem; align-items: center; margin: 0.3rem 0; }
       .mark { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer;
               border: 1px solid var(--border); border-radius: 6px; padding: 0.25rem 0.5rem;
@@ -132,6 +174,15 @@ export class QuestionEditorComponent implements OnDestroy {
   @Input() error = '';
   /** Distinguishes radio groups when two editors are on the page at once. */
   @Input() formId = '';
+  /**
+   * Set on the edit form, which does not offer a change of kind.
+   *
+   * The server allows one up until the question has been asked — after that
+   * answers exist in the shape the old kind collected — but the editor cannot
+   * tell from a question whether it has been asked, and an offer that is
+   * refused on save is worse than one that was never made.
+   */
+  @Input() lockedKind = false;
 
   @Output() save = new EventEmitter<void>();
   @Output() cancel = new EventEmitter<void>();
@@ -206,9 +257,23 @@ export class QuestionEditorComponent implements OnDestroy {
     this.draft.choices.forEach((c, i) => (c.is_correct = i === index));
   }
 
+  /**
+   * Switch between the two kinds.
+   *
+   * The choices are kept rather than cleared while the form is open, so a
+   * teacher who tries "word cloud" and changes their mind has not lost the
+   * choices they typed; `save` sends none for a word cloud, and the server
+   * refuses any that slip through.
+   */
+  setKind(kind: QuestionKind): void {
+    if (this.lockedKind) return;
+    this.draft.kind = kind;
+  }
+
   /** Why the question cannot be saved yet, in the teacher's terms. */
   whyInvalid(): string {
     if (!this.draft.text.trim()) return 'Write the question text.';
+    if (this.draft.kind === 'text') return '';
     const filled = this.draft.choices.filter((c) => c.text.trim());
     if (filled.length < 2) return 'Add at least two choices.';
     if (!filled.some((c) => c.is_correct)) return 'Mark which choice is correct.';
@@ -216,11 +281,9 @@ export class QuestionEditorComponent implements OnDestroy {
   }
 
   valid(): boolean {
+    if (!this.draft.text.trim()) return false;
+    if (this.draft.kind === 'text') return true;
     const filled = this.draft.choices.filter((c) => c.text.trim());
-    return (
-      this.draft.text.trim().length > 0 &&
-      filled.length >= 2 &&
-      filled.filter((c) => c.is_correct).length === 1
-    );
+    return filled.length >= 2 && filled.filter((c) => c.is_correct).length === 1;
   }
 }

@@ -211,6 +211,7 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                     submitLabel="Save changes"
                     [showCancel]="true"
                     [error]="editError()"
+                    [lockedKind]="true"
                     (save)="saveEdit(quiz)"
                     (cancel)="cancelEdit()"
                   />
@@ -245,6 +246,9 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                        the projector is being set up, and a highlighted
                        correct answer is exactly what must not be read from
                        the back of the room. Reveal it behind a click. -->
+                  @if (q.kind === 'text') {
+                    <p class="kind-note">Word cloud — students write a word; asked once.</p>
+                  }
                   <ul>
                     @for (c of q.choices; track c.id) {
                       <li [class.correct]="revealed()[q.id] && c.is_correct">
@@ -357,9 +361,10 @@ export class TeacherDashboardComponent implements OnInit {
     this.api.listQuizzes().subscribe((qs) => this.quizzes.set(qs));
   }
 
-  private blankDraft() {
+  private blankDraft(): QuestionDraft {
     return {
       text: '',
+      kind: 'choice' as const,
       choices: [
         { text: '', is_correct: false },
         { text: '', is_correct: false },
@@ -458,6 +463,7 @@ export class TeacherDashboardComponent implements OnInit {
     this.editError.set('');
     this.editDraft = {
       text: q.text,
+      kind: q.kind,
       choices: q.choices.map((c) => ({
         id: c.id,
         text: c.text,
@@ -481,7 +487,11 @@ export class TeacherDashboardComponent implements OnInit {
       .editQuestion(quiz.id, id, {
         text: this.editDraft.text.trim(),
         image_url: null,
-        choices: this.editDraft.choices.filter((c) => c.text.trim()),
+        kind: this.editDraft.kind,
+        choices:
+          this.editDraft.kind === 'text'
+            ? []
+            : this.editDraft.choices.filter((c) => c.text.trim()),
       })
       .subscribe({
         next: () => {
@@ -548,7 +558,12 @@ export class TeacherDashboardComponent implements OnInit {
     this.formError = '';
     const choices = this.draft.choices.filter((c) => c.text.trim());
     this.api
-      .addQuestion(quiz.id, { text: this.draft.text.trim(), image_url: null, choices })
+      .addQuestion(quiz.id, {
+        text: this.draft.text.trim(),
+        image_url: null,
+        kind: this.draft.kind,
+        choices: this.draft.kind === 'text' ? [] : choices,
+      })
       .subscribe({
         next: () => {
           this.draft = this.blankDraft();

@@ -21,6 +21,9 @@ import { SessionFeed } from './session-feed.service';
           <span class="num">{{ q.position + 1 }}.</span>
           <span [innerHTML]="q.text_html"></span>
         </div>
+        @if (q.kind === 'text') {
+          <p class="write">Write one word or a short phrase on your phone.</p>
+        }
         <ol class="choices">
           @for (c of q.choices; track c.id) {
             <li>{{ c.text }}</li>
@@ -39,6 +42,7 @@ import { SessionFeed } from './session-feed.service';
       .qtext { font-size: 1.5rem; font-weight: 600; line-height: 1.35; }
       .qtext :is(p, ul, ol) { display: inline; margin: 0; }
       .num { color: #888; margin-right: 0.3rem; }
+      .write { font-size: 1.25rem; color: #555; margin: 1rem 0 0; }
       .choices { font-size: 1.25rem; line-height: 1.6; margin: 1rem 0 0; padding-left: 1.6rem; }
       .choices li { margin: 0.2rem 0; }
     `,

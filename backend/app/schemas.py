@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from .markdown import render as render_markdown
-from .models import Phase, Role
+from .models import MAX_TEXT_ANSWER, Kind, Phase, Role
 
 
 class UserOut(BaseModel):
@@ -41,6 +41,25 @@ class RosterLoginIn(BaseModel):
     password: str = ""
 
 
+def _check_choices(question):
+    """A multiple-choice question needs choices; a word cloud must have none.
+
+    Both halves matter. Choices on a word-cloud question would be stored and
+    never shown, leaving a question whose editor and behaviour disagree; and a
+    choice question without exactly one correct answer is the rule the reports
+    are built on.
+    """
+    if question.kind is Kind.text:
+        if question.choices:
+            raise ValueError("A word-cloud question has no choices")
+        return question
+    if len(question.choices) < 2:
+        raise ValueError("A question must have at least two choices")
+    if sum(1 for c in question.choices if c.is_correct) != 1:
+        raise ValueError("A question must have exactly one correct choice")
+    return question
+
+
 class ChoiceIn(BaseModel):
     text: str = Field(min_length=1)
     is_correct: bool = False
@@ -49,13 +68,12 @@ class ChoiceIn(BaseModel):
 class QuestionIn(BaseModel):
     text: str = Field(min_length=1)
     image_url: str | None = None
-    choices: list[ChoiceIn] = Field(min_length=2)
+    kind: Kind = Kind.choice
+    choices: list[ChoiceIn] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def exactly_one_correct(self) -> "QuestionIn":
-        if sum(1 for c in self.choices if c.is_correct) != 1:
-            raise ValueError("A question must have exactly one correct choice")
-        return self
+    def choices_match_the_kind(self) -> "QuestionIn":
+        return _check_choices(self)
 
 
 class ChoiceEdit(BaseModel):
@@ -74,13 +92,12 @@ class ChoiceEdit(BaseModel):
 class QuestionEdit(BaseModel):
     text: str = Field(min_length=1)
     image_url: str | None = None
-    choices: list[ChoiceEdit] = Field(min_length=2)
+    kind: Kind = Kind.choice
+    choices: list[ChoiceEdit] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def exactly_one_correct(self) -> "QuestionEdit":
-        if sum(1 for c in self.choices if c.is_correct) != 1:
-            raise ValueError("A question must have exactly one correct choice")
-        return self
+    def choices_match_the_kind(self) -> "QuestionEdit":
+        return _check_choices(self)
 
 
 class QuestionOrder(BaseModel):
@@ -114,6 +131,7 @@ class QuestionOut(BaseModel):
     position: int
     text: str
     image_url: str | None
+    kind: Kind
     choices: list[ChoiceOut]
 
     @computed_field
@@ -152,7 +170,18 @@ class OpenRoundIn(BaseModel):
 
 
 class AnswerIn(BaseModel):
-    choice_id: int
+    """One submission: a chosen choice, or a word for the cloud."""
+
+    choice_id: int | None = None
+    text: str | None = Field(default=None, max_length=MAX_TEXT_ANSWER)
+
+    @model_validator(mode="after")
+    def one_or_the_other(self) -> "AnswerIn":
+        if (self.choice_id is None) == (self.text is None):
+            raise ValueError("Send either choice_id or text")
+        if self.text is not None and not self.text.strip():
+            raise ValueError("Write a word first")
+        return self
 
 
 class RoundOut(BaseModel):
@@ -176,6 +205,9 @@ class SessionState(BaseModel):
     open_round: RoundOut | None
     question: QuestionOut | None  # the open round's question, choices unmarked
     my_choice_id: int | None = None
+    #: What this student wrote, for a word-cloud question. Their own only:
+    #: the cloud itself is the teacher's to project, after the round is halted.
+    my_text: str | None = None
 
 
 class HistogramOut(BaseModel):
@@ -183,6 +215,20 @@ class HistogramOut(BaseModel):
     phase: Phase
     counts: dict[int, int]  # choice_id -> number of answers
     total: int
+
+
+class WordOut(BaseModel):
+    """One entry in a word cloud: what was written, and how often."""
+
+    text: str
+    count: int
+
+
+class WordCloudOut(BaseModel):
+    question_id: int
+    round_id: int
+    words: list[WordOut]
+    answers: int
 
 
 class ComparisonOut(BaseModel):

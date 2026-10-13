@@ -1,4 +1,5 @@
 import { Component, OnDestroy, OnInit, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 
 import { ApiService } from '../api.service';
@@ -19,6 +20,7 @@ const RETRYABLE_STATUSES = [0, 502, 503, 504];
 @Component({
   selector: 'app-student-session',
   standalone: true,
+  imports: [FormsModule],
   template: `
     <div class="wrap">
       @if (state(); as s) {
@@ -32,22 +34,39 @@ const RETRYABLE_STATUSES = [0, 502, 503, 504];
           @if (s.question.image_url) {
             <img [src]="s.question.image_url" alt="" />
           }
-          <div class="choices">
-            @for (c of s.question.choices; track c.id) {
-              <button
-                class="choice"
-                [class.selected]="selected() === c.id"
-                (click)="answer(c.id)"
-              >
-                {{ c.text }}
+          @if (s.question.kind === 'text') {
+            <div class="word">
+              <input
+                type="text"
+                [(ngModel)]="word"
+                name="word"
+                maxlength="40"
+                placeholder="One word or a short phrase"
+                autocomplete="off"
+                (keyup.enter)="sendWord()"
+              />
+              <button class="send" (click)="sendWord()" [disabled]="!word.trim()">
+                {{ sent() ? 'Change' : 'Send' }}
               </button>
-            }
-          </div>
+            </div>
+          } @else {
+            <div class="choices">
+              @for (c of s.question.choices; track c.id) {
+                <button
+                  class="choice"
+                  [class.selected]="selected() === c.id"
+                  (click)="answer(c.id)"
+                >
+                  {{ c.text }}
+                </button>
+              }
+            </div>
+          }
           @if (sending()) {
             <p class="sending">Sending…</p>
           } @else if (sendError()) {
             <p class="error">{{ sendError() }}</p>
-          } @else if (selected()) {
+          } @else if (selected() || sent()) {
             <p class="saved">Answer saved — you can change it while the question is open.</p>
           }
         } @else {
@@ -75,6 +94,11 @@ const RETRYABLE_STATUSES = [0, 502, 503, 504];
       .choice { padding: 1rem; text-align: left; border: 2px solid #ccc; border-radius: 8px;
                 background: #fff; font-size: 1rem; }
       .choice.selected { border-color: #2c7; background: #eafaf1; }
+      .word { display: flex; gap: 0.5rem; }
+      .word input { flex: 1; padding: 0.9rem; font-size: 1rem; border: 2px solid #ccc;
+                    border-radius: 8px; }
+      .word .send { padding: 0.9rem 1.2rem; font-size: 1rem; border-radius: 8px;
+                    border: 2px solid #2c7; background: #eafaf1; }
       .waiting { color: #777; text-align: center; margin-top: 2rem; }
       .saved { color: #2c7; margin-top: 1rem; }
       .sending { color: #777; margin-top: 1rem; }
@@ -87,6 +111,10 @@ export class StudentSessionComponent implements OnInit, OnDestroy {
   selected = signal<number | null>(null);
   error = signal<string>('');
   sending = signal(false);
+  /** Whether this student's word is in — the cloud's version of `selected`. */
+  sent = signal(false);
+  /** What they are writing, for a word-cloud question. */
+  word = '';
   sendError = signal<string>('');
   private code = '';
   private teardown?: () => void;
@@ -133,8 +161,46 @@ export class StudentSessionComponent implements OnInit, OnDestroy {
 
   private applyState(s: SessionState): void {
     this.state.set(s);
-    // The server tells us our own current choice; trust it over local state.
+    // The server tells us our own current answer; trust it over local state.
     this.selected.set(s.my_choice_id);
+    this.sent.set(!!s.my_text);
+    // Only adopt the server's word when the box is untouched, so a resync
+    // mid-typing does not overwrite what is being written.
+    if (s.my_text && !this.word.trim()) this.word = s.my_text;
+  }
+
+  /**
+   * Send a word for the cloud.
+   *
+   * The same submission as a choice, with the same retry policy behind it:
+   * the whole room writes at once, and a shed or lost request is a student
+   * who looks like they were not there.
+   */
+  sendWord(attempt = 0): void {
+    const text = this.word.trim();
+    if (!text) return;
+    this.sending.set(true);
+    this.sendError.set('');
+    this.api.submitWord(this.code, text).subscribe({
+      next: () => {
+        this.sent.set(true);
+        this.sending.set(false);
+      },
+      error: (err) => {
+        const busy = RETRYABLE_STATUSES.includes(err?.status);
+        if (busy && attempt < SEND_RETRIES) {
+          const wait = SEND_BACKOFF_MS * Math.pow(2, attempt) * (0.5 + Math.random());
+          setTimeout(() => this.sendWord(attempt + 1), wait);
+          return;
+        }
+        this.sending.set(false);
+        if (busy) {
+          this.sendError.set('Too many at once — send it again.');
+          return;
+        }
+        this.resync(); // round probably closed; refresh truth
+      },
+    });
   }
 
   /**

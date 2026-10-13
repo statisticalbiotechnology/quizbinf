@@ -22,6 +22,7 @@ import {
   RosterStatus,
   Round,
   SessionState,
+  WordCloud,
   SyncSummary,
   User,
 } from './models';
@@ -370,6 +371,26 @@ export class ApiService {
     return this.http.post(
       `${API_BASE}/api/sessions/${code}/answers`,
       { choice_id: choiceId },
+      this.opts,
+    );
+  }
+
+  /** The same submission, for a word-cloud question. */
+  submitWord(code: string, text: string): Observable<unknown> {
+    return this.http.post(
+      `${API_BASE}/api/sessions/${code}/answers`,
+      { text },
+      this.opts,
+    );
+  }
+
+  /**
+   * The words a word-cloud question collected. Refused (409) until the
+   * teacher halts the round — nothing is projected while the window is open.
+   */
+  wordCloud(code: string, questionId: number): Observable<WordCloud> {
+    return this.http.get<WordCloud>(
+      `${API_BASE}/api/sessions/${code}/questions/${questionId}/cloud`,
       this.opts,
     );
   }

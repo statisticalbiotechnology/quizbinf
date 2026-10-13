@@ -1,8 +1,9 @@
-import { Component, signal } from '@angular/core';
+import { Component, effect, signal } from '@angular/core';
 
 import { ApiService } from '../api.service';
-import { Draw, Question } from '../models';
+import { Draw, Question, WordCloud } from '../models';
 import { NameDrawComponent } from './name-draw.component';
+import { WordCloudComponent } from './word-cloud.component';
 import { SessionFeed } from './session-feed.service';
 
 /**
@@ -21,7 +22,7 @@ import { SessionFeed } from './session-feed.service';
 @Component({
   selector: 'app-teacher-session-report',
   standalone: true,
-  imports: [NameDrawComponent],
+  imports: [NameDrawComponent, WordCloudComponent],
   template: `
     <div class="wrap">
       <div class="top">
@@ -52,7 +53,21 @@ import { SessionFeed } from './session-feed.service';
             <div class="qtext"><span class="num">{{ q.position + 1 }}.</span>
             <span [innerHTML]="q.text_html"></span></div>
 
-            @if (!shown(q)) {
+            @if (q.kind === 'text') {
+              @if (clouds()[q.id]; as cloud) {
+                <app-word-cloud [words]="cloud.words" [answers]="cloud.answers" />
+              } @else {
+                <p class="pending">
+                  @if (feed.openRoundFor(q)) {
+                    Answers are open — the cloud appears when you halt the round.
+                  } @else if (cloudError()[q.id]) {
+                    {{ cloudError()[q.id] }}
+                  } @else {
+                    Not asked yet.
+                  }
+                </p>
+              }
+            } @else if (!shown(q)) {
               <p class="pending">
                 @if (feed.openRoundFor(q)) {
                   Answers are open — results appear when you halt the round.
@@ -150,6 +165,9 @@ import { SessionFeed } from './session-feed.service';
   ],
 })
 export class TeacherSessionReportComponent {
+  /** Clouds already fetched, by question id. */
+  clouds = signal<Record<number, WordCloud>>({});
+  cloudError = signal<Record<number, string>>({});
   /** The last draw per question. Empty `names` means nobody answered. */
   drawn = signal<Record<number, Draw>>({});
   drawing = signal<number | null>(null);
@@ -157,7 +175,27 @@ export class TeacherSessionReportComponent {
   /** Study material normally wants the answers; before a class it may not. */
   withAnswers = signal(true);
 
-  constructor(public feed: SessionFeed, private api: ApiService) {}
+  constructor(public feed: SessionFeed, private api: ApiService) {
+    // Fetch each cloud once its round has been halted. The feed re-emits on
+    // every state change, which is exactly when a halt becomes visible.
+    effect(() => {
+      const code = this.feed.code();
+      if (!code) return;
+      for (const q of this.feed.questions()) {
+        if (q.kind !== 'text') continue;
+        if (this.clouds()[q.id] || this.feed.openRoundFor(q)) continue;
+        if (!this.feed.ran(q, 'pre')) continue;
+        this.api.wordCloud(code, q.id).subscribe({
+          next: (cloud) => this.clouds.update((m) => ({ ...m, [q.id]: cloud })),
+          error: (err) =>
+            this.cloudError.update((m) => ({
+              ...m,
+              [q.id]: err?.error?.detail ?? 'Could not load the cloud.',
+            })),
+        });
+      }
+    });
+  }
 
   exportUrl(quizId: number, format: 'md' | 'html'): string {
     return this.api.quizExportUrl(quizId, format, this.withAnswers());

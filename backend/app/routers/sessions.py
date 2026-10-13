@@ -17,12 +17,13 @@ from ..auth import current_teacher, current_user
 from ..config import Settings, get_settings
 from ..db import SessionLocal, get_db, writing
 from ..events import broadcaster
-from ..models import Answer, Choice, Phase, Question, Quiz, QuizSession, User
+from ..models import Answer, Choice, Kind, Phase, Question, Quiz, QuizSession, User
 from ..public_base import public_base_url
 from ..schemas import (
     AnswerIn,
     ComparisonOut,
     HistogramOut,
+    WordCloudOut,
     LiveCountOut,
     OpenRoundIn,
     ParticipantsOut,
@@ -49,6 +50,7 @@ def _state(db: Session, session: QuizSession, user: User | None) -> SessionState
     open_round = service.get_open_round(db, session)
     question = open_round.question if open_round else None
     my_choice_id = None
+    my_text = None
     if open_round and user:
         answer = db.scalar(
             select(Answer).where(
@@ -56,6 +58,7 @@ def _state(db: Session, session: QuizSession, user: User | None) -> SessionState
             )
         )
         my_choice_id = answer.choice_id if answer else None
+        my_text = answer.text if answer else None
     return SessionState(
         code=session.code,
         # The teacher view loads the session's questions from this; matching on
@@ -65,6 +68,7 @@ def _state(db: Session, session: QuizSession, user: User | None) -> SessionState
         open_round=RoundOut.model_validate(open_round) if open_round else None,
         question=question,
         my_choice_id=my_choice_id,
+        my_text=my_text,
     )
 
 
@@ -340,6 +344,37 @@ def histogram(
     )
 
 
+@router.get("/{code}/questions/{question_id}/cloud", response_model=WordCloudOut)
+def word_cloud(
+    code: str,
+    question_id: int,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+) -> WordCloudOut:
+    """The words a word-cloud question collected, once it has been halted.
+
+    Refused while the round is open, for the reason the histogram is: this is
+    the projected screen, and a cloud filling in live shows the room what to
+    write — and puts whatever anybody types on the wall before the teacher has
+    seen it. Counts only; who wrote a word never leaves the server.
+    """
+    session = _session_by_code(db, code)
+    if session.quiz.owner_id != teacher.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your session")
+    round_ = next(
+        (r for r in session.rounds if r.question_id == question_id), None
+    )
+    if round_ is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "That question has not been asked")
+    if round_.question.kind is not Kind.text:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Not a word-cloud question")
+    if round_.is_open:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Halt the question before showing the cloud"
+        )
+    return WordCloudOut(**service.word_cloud(db, round_))
+
+
 @router.get("/{code}/participants", response_model=ParticipantsOut)
 def participants(
     code: str,
@@ -603,14 +638,16 @@ def submit_answer(
     round_ = service.get_open_round(db, session)
     if round_ is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "No round is open")
-    choice = db.get(Choice, body.choice_id)
-    if choice is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Choice not found")
+    choice = None
+    if body.choice_id is not None:
+        choice = db.get(Choice, body.choice_id)
+        if choice is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Choice not found")
     try:
-        service.submit_answer(db, round_, user, choice)
+        answer = service.submit_answer(db, round_, user, choice, body.text)
     except service.RuleViolation as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
-    return {"ok": True, "choice_id": choice.id}
+    return {"ok": True, "choice_id": answer.choice_id, "text": answer.text}
 
 
 def _join_session(code: str, user_id: int) -> str:

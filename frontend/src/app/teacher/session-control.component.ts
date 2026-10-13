@@ -52,17 +52,27 @@ const POLL_MS = 2000;
               <li [class.correct]="revealed()[q.id] && c.is_correct">{{ c.text }}</li>
             }
           </ol>
-          <button type="button" class="reveal" (click)="toggleReveal(q.id)">
-            {{ revealed()[q.id] ? 'Hide the answer' : 'Show which is correct' }}
-          </button>
+          @if (q.kind !== 'text') {
+            <button type="button" class="reveal" (click)="toggleReveal(q.id)">
+              {{ revealed()[q.id] ? 'Hide the answer' : 'Show which is correct' }}
+            </button>
+          }
 
           <div class="controls">
             <button (click)="open(q, 'pre')" [disabled]="feed.anyOpen() || ran(q, 'pre')">
-              {{ ran(q, 'pre') ? '✓ 1st bout done' : 'Open 1st bout (pre)' }}
+              @if (q.kind === 'text') {
+                {{ ran(q, 'pre') ? '✓ asked' : 'Open for words' }}
+              } @else {
+                {{ ran(q, 'pre') ? '✓ 1st bout done' : 'Open 1st bout (pre)' }}
+              }
             </button>
-            <button (click)="open(q, 'post')" [disabled]="feed.anyOpen() || ran(q, 'post')">
-              {{ ran(q, 'post') ? '✓ 2nd bout done' : 'Open 2nd bout (post)' }}
-            </button>
+            <!-- A word cloud has no second bout: nothing to compare against,
+                 and asking again only puts the same words back on the wall. -->
+            @if (q.kind !== 'text') {
+              <button (click)="open(q, 'post')" [disabled]="feed.anyOpen() || ran(q, 'post')">
+                {{ ran(q, 'post') ? '✓ 2nd bout done' : 'Open 2nd bout (post)' }}
+              </button>
+            }
             @if (hasRun(q)) {
               <button class="reset" (click)="reset(q)" title="Discard this question's answers and run it again">
                 ↺ Reset

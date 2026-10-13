@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -119,6 +120,26 @@ class Quiz(Base):
     )
 
 
+class Kind(str, enum.Enum):
+    """What a question asks for.
+
+    `choice` is peer instruction: pick one of several, asked twice with a
+    discussion in between. `text` is a word cloud — a word or short phrase,
+    asked once, with no right answer. The two differ in enough places that the
+    kind is stored rather than inferred from whether choices exist: a question
+    being edited passes through a moment with no choices, and guessing from
+    that would change what it is.
+    """
+
+    choice = "choice"
+    text = "text"
+
+
+#: The longest word-cloud answer. A cloud is unreadable past a few words, and
+#: a phone keyboard mid-lecture argues for the same.
+MAX_TEXT_ANSWER = 40
+
+
 class Question(Base):
     __tablename__ = "questions"
 
@@ -127,6 +148,9 @@ class Question(Base):
     position: Mapped[int] = mapped_column(default=0)
     text: Mapped[str] = mapped_column(Text)  # markdown allowed
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    kind: Mapped[Kind] = mapped_column(
+        Enum(Kind), nullable=False, default=Kind.choice, server_default=Kind.choice.value
+    )
 
     quiz: Mapped[Quiz] = relationship(back_populates="questions")
     choices: Mapped[list["Choice"]] = relationship(
@@ -233,14 +257,22 @@ class Answer(Base):
     __tablename__ = "answers"
     __table_args__ = (
         UniqueConstraint("round_id", "user_id", name="uq_one_answer_per_user_per_round"),
+        CheckConstraint(
+            "(choice_id IS NULL) <> (text IS NULL)",
+            name="ck_answer_is_choice_or_text",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     round_id: Mapped[int] = mapped_column(ForeignKey("rounds.id"))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    choice_id: Mapped[int] = mapped_column(ForeignKey("choices.id"))
+    #: Null for a word-cloud answer, which carries `text` instead. Exactly one
+    #: of the two is set, and the constraint below is what keeps that true of
+    #: rows written by anything other than this application.
+    choice_id: Mapped[int | None] = mapped_column(ForeignKey("choices.id"), nullable=True)
+    text: Mapped[str | None] = mapped_column(String(MAX_TEXT_ANSWER), nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     round: Mapped[Round] = relationship(back_populates="answers")
     user: Mapped[User] = relationship()
-    choice: Mapped[Choice] = relationship()
+    choice: Mapped[Choice | None] = relationship()

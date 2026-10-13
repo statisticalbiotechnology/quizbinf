@@ -95,6 +95,28 @@ Key product requirements:
   and the spin can always land.
 - **Pre/post pairing.** Every answer is stored with the round it belongs to
   (`pre` or `post`) so the two distributions can be compared per question.
+- **A question is multiple choice or a word cloud** (`Question.kind`). The
+  cloud is for the opening lecture — *what do you expect to learn?* — and is
+  deliberately the peer-instruction flow with its three load-bearing parts
+  removed: no right answer, no second bout, no bars. Students write one word
+  or short phrase (`MAX_TEXT_ANSWER`, 40 characters) and `Answer.text` holds
+  it instead of `choice_id`; a check constraint keeps exactly one of the two
+  set. Three properties carry over unchanged, and should stay that way:
+  - **Nothing is projected while the window is open.** The cloud is refused
+    (409) until the round is halted, for the reason the histogram is: a cloud
+    filling in live tells the room what to write, and puts whatever anybody
+    types on the wall before the teacher has seen it.
+  - **Counts only.** `word_cloud` returns words and how many wrote each,
+    never who — the rule the histogram already follows. A student gets their
+    own word back in `my_text` and nobody else's.
+  - **It is a chance like any other.** One round ran, so it counts in the
+    attendance files through the same `session_answering` as everything else.
+  Words are grouped case-insensitively and shown in the spelling most
+  students used, so a cloud is not split between "DNA" and "dna"; the inside
+  of a phrase is left alone, because "machine learning" is one answer and
+  `sekvens-analys` is a word. The kind cannot change once the question has
+  been asked: answers already recorded have the shape of the kind that
+  collected them.
 
 ## Architecture
 
@@ -910,6 +932,7 @@ alembic upgrade head
 
 | Endpoint | Who | Purpose |
 | --- | --- | --- |
+| `GET /api/sessions/{code}/questions/{id}/cloud` | teacher (owner) | the words a word-cloud question collected; 409 until the round is halted |
 | `POST /api/auth/mock-login` | dev only | log in without the IdP |
 | `GET /api/auth/methods` | all | which login forms this deployment offers |
 | `POST /api/auth/roster-login` | all | **stop-gap:** identify against the roster; teachers need the shared password |

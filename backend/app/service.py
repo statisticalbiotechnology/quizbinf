@@ -15,9 +15,11 @@ from sqlalchemy.orm import Session
 
 from .db import insert_ignoring_conflict, write_path, writing
 from .models import (
+    MAX_TEXT_ANSWER,
     Answer,
     Choice,
     DeviceClaim,
+    Kind,
     Phase,
     Question,
     Quiz,
@@ -45,6 +47,11 @@ def open_round(db: Session, session: QuizSession, question: Question, phase: Pha
     """
     if question.quiz_id != session.quiz_id:
         raise RuleViolation("Question does not belong to this session's quiz")
+    if question.kind is Kind.text and phase is Phase.post:
+        # There is nothing for a second bout to compare against: a word cloud
+        # has no right answer and no distribution to shift, and asking it
+        # twice would put the same words on the wall again.
+        raise RuleViolation("A word-cloud question is asked once, not twice")
     # Lock the session for the length of this decision. Without the write gate
     # two clicks a moment apart — a teacher's double tap, or the projected view
     # and the phone remote — could both read "nothing open" and open a round
@@ -98,7 +105,13 @@ def get_open_round(db: Session, session: QuizSession) -> Round | None:
 
 
 @write_path
-def submit_answer(db: Session, round_: Round, user: User, choice: Choice) -> Answer:
+def submit_answer(
+    db: Session,
+    round_: Round,
+    user: User,
+    choice: Choice | None = None,
+    text: str | None = None,
+) -> Answer:
     """Record `user`'s answer; one answer per user per round, last write wins
     while the round is open.
 
@@ -117,8 +130,17 @@ def submit_answer(db: Session, round_: Round, user: User, choice: Choice) -> Ans
       both insert; the unique constraint refuses one, and that one runs again
       and updates the row the winner wrote.
     """
-    if choice.question_id != round_.question_id:
-        raise RuleViolation("Choice does not belong to the round's question")
+    if round_.question.kind is Kind.text:
+        text = normalise_word(text or "")
+        if not text:
+            raise RuleViolation("Write a word first")
+        choice = None
+    else:
+        if choice is None:
+            raise RuleViolation("Pick one of the choices")
+        if choice.question_id != round_.question_id:
+            raise RuleViolation("Choice does not belong to the round's question")
+        text = None
     for attempt in range(2):
         db.refresh(round_, with_for_update={"read": True})
         if not round_.is_open:
@@ -126,11 +148,15 @@ def submit_answer(db: Session, round_: Round, user: User, choice: Choice) -> Ans
         answer = db.scalar(
             select(Answer).where(Answer.round_id == round_.id, Answer.user_id == user.id)
         )
+        choice_id = choice.id if choice else None
         if answer is None:
-            answer = Answer(round_id=round_.id, user_id=user.id, choice_id=choice.id)
+            answer = Answer(
+                round_id=round_.id, user_id=user.id, choice_id=choice_id, text=text
+            )
             db.add(answer)
         else:
-            answer.choice_id = choice.id
+            answer.choice_id = choice_id
+            answer.text = text
             answer.submitted_at = utcnow()
         try:
             db.commit()
@@ -935,6 +961,7 @@ def update_question(
     text: str,
     image_url: str | None,
     choices: list,
+    kind: Kind | None = None,
 ) -> Question:
     """Edit a question in place, keeping recorded answers readable.
 
@@ -950,6 +977,20 @@ def update_question(
     included on purpose: marking the wrong one is exactly the mistake a
     teacher needs to fix, and the per-session report then reads correctly.
     """
+    if kind is not None and kind is not question.kind:
+        # Turning a multiple-choice question into a word cloud, or back, after
+        # it has been asked would leave recorded answers of the wrong shape —
+        # choices nothing displays, or words with no bar to count them in. The
+        # question is unchanged rather than silently emptied.
+        asked = db.scalar(
+            select(func.count()).select_from(Round).where(Round.question_id == question.id)
+        )
+        if asked:
+            raise RuleViolation(
+                "This question has been asked already, so its kind cannot change"
+            )
+        question.kind = kind
+
     existing = {c.id: c for c in question.choices}
     incoming_ids = {c.id for c in choices if c.id is not None}
 
@@ -1143,10 +1184,56 @@ def reset_question(db: Session, session: QuizSession, question: Question) -> int
     return len(doomed)
 
 
+def normalise_word(raw: str) -> str:
+    """One student's word, tidied just enough to group with its neighbours.
+
+    Case and surrounding punctuation are noise — "Alignment", "alignment" and
+    "alignment!" are one entry in a cloud — but the inside of the phrase is
+    left alone: "machine learning" stays two words of one answer, and a
+    hyphenated or accented word survives as written.
+    """
+    cleaned = " ".join(raw.split())
+    return cleaned.strip(" \t.,;:!?\"'()[]").strip()[:MAX_TEXT_ANSWER]
+
+
+def word_cloud(db: Session, round_: Round) -> dict:
+    """What a word-cloud round collected, counted and ordered.
+
+    Grouped case-insensitively and shown in the spelling most students used,
+    so a cloud is not split between "DNA" and "dna". Counts only: who wrote
+    what never leaves the server, the same rule the histogram follows.
+    """
+    seen: dict[str, dict[str, int]] = {}
+    answers = 0
+    for answer in round_.answers:
+        word = (answer.text or "").strip()
+        if not word:
+            continue
+        answers += 1
+        spellings = seen.setdefault(word.casefold(), {})
+        spellings[word] = spellings.get(word, 0) + 1
+    words = [
+        {
+            "text": max(spellings.items(), key=lambda kv: (kv[1], kv[0]))[0],
+            "count": sum(spellings.values()),
+        }
+        for spellings in seen.values()
+    ]
+    words.sort(key=lambda w: (-w["count"], w["text"].casefold()))
+    return {
+        "question_id": round_.question_id,
+        "round_id": round_.id,
+        "words": words,
+        "answers": answers,
+    }
+
+
 def round_histogram(db: Session, round_: Round) -> dict[int, int]:
     """Aggregate answer counts per choice id. Never exposes who answered what."""
     counts = {choice.id: 0 for choice in round_.question.choices}
     for answer in round_.answers:
+        if answer.choice_id is None:  # a word-cloud answer has no bar
+            continue
         counts[answer.choice_id] = counts.get(answer.choice_id, 0) + 1
     return counts
 

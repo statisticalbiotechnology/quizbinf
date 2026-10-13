@@ -14,6 +14,12 @@ export interface Choice {
   is_correct?: boolean; // present only in teacher views
 }
 
+/**
+ * What a question asks for: one of several choices, asked twice with a
+ * discussion in between, or a word for a cloud, asked once.
+ */
+export type QuestionKind = 'choice' | 'text';
+
 export interface Question {
   id: number;
   position: number;
@@ -22,6 +28,7 @@ export interface Question {
   /** `text` rendered and sanitised server-side; bind this for display. */
   text_html: string;
   image_url: string | null;
+  kind: QuestionKind;
   choices: Choice[];
 }
 
@@ -46,6 +53,21 @@ export interface SessionState {
   open_round: Round | null;
   question: Question | null;
   my_choice_id: number | null;
+  /** What this student wrote, for a word-cloud question. Their own only. */
+  my_text: string | null;
+}
+
+export interface Word {
+  text: string;
+  count: number;
+}
+
+/** A halted word-cloud round: every word written, with how many wrote it. */
+export interface WordCloud {
+  question_id: number;
+  round_id: number;
+  words: Word[];
+  answers: number;
 }
 
 export interface Histogram {
@@ -120,6 +142,7 @@ export interface ChoiceInput {
 export interface QuestionInput {
   text: string;
   image_url: string | null;
+  kind: QuestionKind;
   choices: ChoiceInput[];
 }
 
@@ -171,6 +194,7 @@ export interface SyncSummary {
 export interface QuestionEditInput {
   text: string;
   image_url: string | null;
+  kind: QuestionKind;
   choices: ChoiceEditInput[];
 }
 
