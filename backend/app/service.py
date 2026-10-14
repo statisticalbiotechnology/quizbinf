@@ -413,8 +413,12 @@ def participation_report(db: Session, session: QuizSession) -> list[dict]:
 
             pre, post = verdict("pre"), verdict("post")
             answered += sum(1 for v in (pre, post) if v is not None)
-            pre_correct += 1 if pre else 0
-            post_correct += 1 if post else 0
+            # A cloud's pass is presence, not knowledge: it stays out of the
+            # correctness totals, where it would make a student look worse
+            # after the discussion than before it.
+            if question_id not in cloud:
+                pre_correct += 1 if pre else 0
+                post_correct += 1 if post else 0
             per_question.append({"question_id": question_id, "pre": pre, "post": post})
         rows.append(
             {

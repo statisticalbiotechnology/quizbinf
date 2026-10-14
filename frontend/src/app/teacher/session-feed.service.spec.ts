@@ -113,6 +113,17 @@ describe('SessionFeed projection rules', () => {
     expect(feed.stage()).toBe('waiting');
   });
 
+  it('moves past a word cloud once its one bout is done', () => {
+    // The cloud has no second bout, so it is never "between the bouts": the
+    // discussion label belongs to the multiple-choice question after it.
+    const cloud: Question = { ...question(3, 0), kind: 'text', choices: [] };
+    feed.questions.set([cloud, q1, q2]);
+    feed.comparisons.set({ 3: comparison(3, true), 1: comparison(1, true) });
+
+    expect(feed.currentQuestion()?.id).toBe(1);
+    expect(feed.stage()).toBe('discuss');
+  });
+
   it('counts the lecture as started once a bout has opened', () => {
     // Which is what moves the projected screen from "here is the QR code" to
     // "here is the question, and the code in the corner".

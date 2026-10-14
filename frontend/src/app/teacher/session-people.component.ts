@@ -150,7 +150,8 @@ import { SessionFeed } from './session-feed.service';
           <span class="mark no">✗</span> wrong,
           <span class="mark none">–</span> did not answer.
           A word cloud has one mark: <span class="mark ok">✓</span> passed for
-          anyone who wrote a word, since it measures presence.
+          anyone who wrote a word, since it measures presence. It is not
+          counted in the correct totals.
         </p>
       }
     </div>

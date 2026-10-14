@@ -119,6 +119,10 @@ export class SessionFeed implements OnDestroy {
    * In order: whatever round is open; else one that has had its first bout but
    * not its second (the discussion is happening); else the next one not yet
    * asked. Null once every question has run both bouts.
+   *
+   * A word cloud is asked once, so its single bout finishes it. Counted as
+   * "first bout but not its second", it stayed the projected question for
+   * the rest of the lecture, labelled for discussion.
    */
   currentQuestion(): Question | null {
     const open = this.openRound();
@@ -126,7 +130,7 @@ export class SessionFeed implements OnDestroy {
       return this.questions().find((q) => q.id === open.question_id) ?? null;
     }
     const midway = this.questions().find(
-      (q) => this.ran(q, 'pre') && !this.ran(q, 'post'),
+      (q) => q.kind !== 'text' && this.ran(q, 'pre') && !this.ran(q, 'post'),
     );
     return midway ?? this.questions().find((q) => !this.ran(q, 'pre')) ?? null;
   }

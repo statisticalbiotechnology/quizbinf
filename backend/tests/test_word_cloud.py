@@ -236,7 +236,9 @@ def test_writing_a_word_is_a_pass_in_the_participation_report(teacher_client, le
     rows = teacher_client.get(f"/api/sessions/{code}/participation").json()["rows"]
     row = next(r for r in rows if r["username"] == "stu20")
     assert row["answers"] == [{"question_id": question_id, "pre": True, "post": None}]
-    assert row["pre_correct"] == 1
+    assert row["answered"] == 1
+    # Presence, not knowledge: it is kept out of the correctness totals.
+    assert row["pre_correct"] == 0
 
     csv_text = teacher_client.get(f"/api/sessions/{code}/participation.csv").text
     line = next(line for line in csv_text.splitlines() if line.startswith("stu20,"))
