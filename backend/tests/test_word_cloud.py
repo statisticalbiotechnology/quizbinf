@@ -219,3 +219,26 @@ def test_an_empty_word_is_refused(teacher_client, lecture):
     open_round(teacher_client, code, question_id)
     assert answer_as(code, "stu7", text="   ") == 422
     assert answer_as(code, "stu8", text="...") == 409
+
+
+# --- participation ---------------------------------------------------------
+
+
+def test_writing_a_word_is_a_pass_in_the_participation_report(teacher_client, lecture):
+    """The cloud measures presence, so any word passes. Scored against a
+    correct choice it does not have, every student who answered was shown
+    as wrong."""
+    _quiz_id, question_id, code = lecture
+    round_id = open_round(teacher_client, code, question_id).json()["id"]
+    assert answer_as(code, "stu20", text="anything at all") == 200
+    teacher_client.post(f"/api/sessions/{code}/rounds/{round_id}/close")
+
+    rows = teacher_client.get(f"/api/sessions/{code}/participation").json()["rows"]
+    row = next(r for r in rows if r["username"] == "stu20")
+    assert row["answers"] == [{"question_id": question_id, "pre": True, "post": None}]
+    assert row["pre_correct"] == 1
+
+    csv_text = teacher_client.get(f"/api/sessions/{code}/participation.csv").text
+    line = next(line for line in csv_text.splitlines() if line.startswith("stu20,"))
+    assert ",passed,-," in line
+    assert "wrong" not in line

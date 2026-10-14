@@ -498,9 +498,11 @@ def participation_csv(
     questions = session.quiz.questions
     rows = service.participation_report(db, session)
 
-    def mark(value: bool | None) -> str:
+    def mark(value: bool | None, question) -> str:
         if value is None:
             return "-"
+        if question.kind is Kind.text:
+            return "passed"
         return "correct" if value else "wrong"
 
     buf = io.StringIO()
@@ -512,8 +514,8 @@ def participation_csv(
     writer.writerow(header)
     for row in rows:
         line = [row["username"], row["display_name"]]
-        for answer in row["answers"]:
-            line += [mark(answer["pre"]), mark(answer["post"])]
+        for answer, question in zip(row["answers"], questions):
+            line += [mark(answer["pre"], question), mark(answer["post"], question)]
         line += [row["answered"], row["pre_correct"], row["post_correct"]]
         writer.writerow(line)
 

@@ -256,9 +256,11 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                       </li>
                     }
                   </ul>
-                  <button type="button" class="reveal" (click)="toggleReveal(q.id)">
-                    {{ revealed()[q.id] ? 'Hide the answer' : 'Show which is correct' }}
-                  </button>
+                  @if (q.kind !== 'text') {
+                    <button type="button" class="reveal" (click)="toggleReveal(q.id)">
+                      {{ revealed()[q.id] ? 'Hide the answer' : 'Show which is correct' }}
+                    </button>
+                  }
                   @if (deleteError()[q.id]; as msg) {
                     <p class="error">{{ msg }}</p>
                   }

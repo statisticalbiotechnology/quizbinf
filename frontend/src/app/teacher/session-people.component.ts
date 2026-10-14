@@ -126,8 +126,16 @@ import { SessionFeed } from './session-feed.service';
                 </td>
                 @for (a of row.answers; track a.question_id) {
                   <td class="q">
-                    <span class="mark" [class]="cls(a.pre)">{{ glyph(a.pre) }}</span>
-                    <span class="mark" [class]="cls(a.post)">{{ glyph(a.post) }}</span>
+                    @if (isCloud(a.question_id)) {
+                      <!-- Asked once and right whatever was written: one
+                           mark, and a pass for anyone who wrote a word. -->
+                      <span class="mark" [class]="cls(a.pre)" [title]="a.pre ? 'passed' : ''">{{
+                        glyph(a.pre)
+                      }}</span>
+                    } @else {
+                      <span class="mark" [class]="cls(a.pre)">{{ glyph(a.pre) }}</span>
+                      <span class="mark" [class]="cls(a.post)">{{ glyph(a.post) }}</span>
+                    }
                   </td>
                 }
                 <td class="tot">{{ row.pre_correct }}</td>
@@ -141,6 +149,8 @@ import { SessionFeed } from './session-feed.service';
           <span class="mark ok">✓</span> correct,
           <span class="mark no">✗</span> wrong,
           <span class="mark none">–</span> did not answer.
+          A word cloud has one mark: <span class="mark ok">✓</span> passed for
+          anyone who wrote a word, since it measures presence.
         </p>
       }
     </div>
@@ -220,6 +230,10 @@ export class TeacherSessionPeopleComponent implements OnInit {
       this.assignment.trim(),
       this.threshold,
     );
+  }
+
+  isCloud(questionId: number): boolean {
+    return this.questions().some((q) => q.id === questionId && q.kind === 'text');
   }
 
   cls(v: boolean | null): string {
