@@ -838,6 +838,15 @@ URL so the QR code resolves. See the README.
   - **A lecture that ran no rounds is dropped from the denominator**, not
     scored zero: nothing was asked, so it can neither be attended nor missed.
 
+  **The Participants page offers one download, not two.** It used to carry
+  the per-question spreadsheet beside the Canvas file, and a teacher marking a
+  lecture took the first: Canvas refuses it outright, since its header is
+  `username,name,q1_pre,…` rather than Canvas's identifying block. Two files a
+  few centimetres apart, one of which is rejected by the system the other is
+  for, is a trap worth not having. The per-question detail is already on the
+  page as a table, and `GET /api/sessions/{code}/participation.csv` still
+  serves the spreadsheet to anyone who asks for it by URL.
+
   **The same file exists per lecture** (`GET
   /api/sessions/{code}/canvas-participation.csv`, on the Participants page),
   scored out of one so a single lecture can be marked without waiting for the

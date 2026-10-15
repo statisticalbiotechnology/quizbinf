@@ -14,6 +14,13 @@ import { SessionFeed } from './session-feed.service';
  * meant for the lecture-hall screen and this one sits next to them in the nav.
  * Names are hidden until revealed, so opening the tab by accident in front of
  * the class does not expose anyone.
+ *
+ * One download, deliberately. There used to be two a few centimetres apart —
+ * this lecture's per-question spreadsheet and the Canvas gradebook file — and
+ * a teacher marking a lecture took the first, which Canvas refuses outright
+ * because its header is not Canvas's. The per-question detail is on the page
+ * already, in the table below; `GET /api/sessions/{code}/participation.csv`
+ * still serves the spreadsheet for anyone who wants the file itself.
  */
 @Component({
   selector: 'app-teacher-session-people',
@@ -30,7 +37,6 @@ import { SessionFeed } from './session-feed.service';
         <button (click)="revealed.set(!revealed())">
           {{ revealed() ? 'Hide names' : 'Show names' }}
         </button>
-        <a class="csv" [href]="csvUrl" download>Download CSV</a>
       </div>
 
       <details class="canvas">
@@ -193,7 +199,6 @@ export class TeacherSessionPeopleComponent implements OnInit {
   readiness = signal<CanvasReadiness | null>(null);
   questions = signal<Question[]>([]);
   revealed = signal(false);
-  csvUrl = '';
   /** Blank lets the server name the column for the lecture and its date. */
   assignment = '';
   /** Share of this lecture's bouts a student must answer to score the point. */
@@ -202,7 +207,6 @@ export class TeacherSessionPeopleComponent implements OnInit {
   constructor(public feed: SessionFeed, private api: ApiService) {}
 
   ngOnInit(): void {
-    this.csvUrl = this.api.participationCsvUrl(this.feed.code());
     this.api.participation(this.feed.code()).subscribe((r) => {
       this.questions.set(r.questions);
       this.rows.set(r.rows);

@@ -34,6 +34,7 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
           <label>From <input type="date" [(ngModel)]="reportFrom" name="from" /></label>
           <label>To <input type="date" [(ngModel)]="reportTo" name="to" /></label>
           <a class="download" [href]="semesterCsvUrl()" download>Download CSV</a>
+          <span class="note">a spreadsheet to read — not the Canvas file</span>
         </div>
         <p class="note">Leave the dates empty for everything.</p>
 
