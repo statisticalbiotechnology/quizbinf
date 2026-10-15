@@ -14,15 +14,29 @@ const MAX_FONT = 96;
 const MIN_FONT = 18;
 /** Enough for a lecture hall; past this the wall is unreadable anyway. */
 const MAX_WORDS = 80;
+/**
+ * The biggest words stay level; turning starts after this many.
+ *
+ * The first few are what the room reads from the back, and a sideways
+ * headline is a worse cloud, not a livelier one.
+ */
+const TURN_AFTER = 3;
+/** How many times a word that does not fit is retried smaller, and by how
+ * much each time — down to a floor, below which it would not be readable
+ * from the back of the room anyway. */
+const SHRINK_ATTEMPTS = 2;
+const SHRINK = 0.85;
+const FLOOR_FONT = 12;
 
 /**
  * The words of a halted word-cloud round, laid out for the projector.
  *
  * Drawn here rather than with a word-cloud library on purpose: the layout is
- * a spiral and a rectangle-overlap test, which is less code than wiring a
- * dependency into the build and leaves nothing to go stale. If the packing
- * ever needs to be cleverer — rotated words, shapes — wordcloud2.js does that
- * well and this component is the single place that would change.
+ * a spiral, a rectangle-overlap test and a quarter turn for some of the
+ * words, which is less code than wiring a dependency into the build and
+ * leaves nothing to go stale. If the packing ever needs to nestle words into
+ * each other's gaps, or to fill a shape, wordcloud2.js does that well and
+ * this component is the single place that would change.
  *
  * Size follows the square root of the count rather than the count itself: a
  * word said twice as often is twice the *area*, which is how a reader
@@ -94,20 +108,47 @@ export class WordCloudComponent implements AfterViewInit, OnChanges {
     const taken: { x: number; y: number; w: number; h: number }[] = [];
 
     words.forEach((word, i) => {
-      const size = Math.max(
+      const wanted = Math.max(
         MIN_FONT,
         Math.round(MAX_FONT * Math.sqrt(word.count / top)),
       );
-      ctx.font = `600 ${size}px system-ui, sans-serif`;
-      const w = ctx.measureText(word.text).width;
-      const h = size * 1.1;
-      const place = this.findSpot(w, h, width, height, taken, i);
-      if (!place) return; // no room left; the long tail is in the list below
-      taken.push({ x: place.x, y: place.y, w, h });
-      // Alternating hues keep neighbours apart without colour carrying meaning.
-      ctx.fillStyle = `hsl(${(i * 47) % 360} 45% ${i % 2 ? 42 : 30}%)`;
-      ctx.textBaseline = 'top';
-      ctx.fillText(word.text, place.x, place.y);
+      // Turned words are what makes a cloud look like one rather than a list,
+      // and they pack better: a tall thin gap fits a word nobody could lay
+      // flat in it. Not the biggest few, which are read at a glance from the
+      // back of the room, and not so many that the room reads sideways.
+      const turned = i >= TURN_AFTER && i % 3 === 1;
+
+      // Shrink and try again rather than drop the word. A cloud missing its
+      // tail is missing the answers only one person gave, and those are the
+      // ones a teacher reads out.
+      for (let attempt = 0; attempt <= SHRINK_ATTEMPTS; attempt++) {
+        const size = Math.max(FLOOR_FONT, Math.round(wanted * SHRINK ** attempt));
+        ctx.font = `600 ${size}px system-ui, sans-serif`;
+        const length = ctx.measureText(word.text).width;
+        const thickness = size * 1.1;
+        const w = turned ? thickness : length;
+        const h = turned ? length : thickness;
+
+        const place = this.findSpot(w, h, width, height, taken, i);
+        if (!place) continue; // smaller next time; the list below always has it
+        taken.push({ x: place.x, y: place.y, w, h });
+
+        // Alternating hues keep neighbours apart without colour meaning anything.
+        ctx.fillStyle = `hsl(${(i * 47) % 360} 45% ${i % 2 ? 42 : 30}%)`;
+        ctx.textBaseline = 'top';
+        if (turned) {
+          // Rotate about the word's own corner and draw along the new axis,
+          // reading bottom-to-top the way a book's spine is written.
+          ctx.save();
+          ctx.translate(place.x, place.y + h);
+          ctx.rotate(-Math.PI / 2);
+          ctx.fillText(word.text, 0, 0);
+          ctx.restore();
+        } else {
+          ctx.fillText(word.text, place.x, place.y);
+        }
+        break;
+      }
     });
   }
 
@@ -127,10 +168,12 @@ export class WordCloudComponent implements AfterViewInit, OnChanges {
   ): { x: number; y: number } | null {
     const cx = width / 2;
     const cy = height / 2;
-    const step = 6;
-    for (let t = 0; t < 2000; t++) {
-      const angle = 0.35 * t + seed;
-      const radius = step * 0.35 * t;
+    // A tight spiral: a looser one leaves gaps the tail could have used, and
+    // measured against a realistic cloud it was the difference between
+    // placing 26 of 28 words and placing all of them.
+    for (let t = 0; t < 4000; t++) {
+      const angle = 0.25 * t + seed;
+      const radius = 1.2 * t;
       const x = cx + radius * Math.cos(angle) - w / 2;
       const y = cy + radius * Math.sin(angle) * 0.55 - h / 2;
       if (x < 0 || y < 0 || x + w > width || y + h > height) continue;

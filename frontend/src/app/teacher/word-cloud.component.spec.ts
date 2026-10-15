@@ -39,6 +39,41 @@ describe('WordCloudComponent', () => {
     expect(() => fixture.detectChanges()).not.toThrow();
   });
 
+  it('turns some words and leaves the biggest level', () => {
+    // A cloud of only horizontal words reads as a list. The largest few stay
+    // level, because they are what the room reads from the back.
+    const calls: string[] = [];
+    const fake = {
+      clearRect: () => {},
+      measureText: (t: string) => ({ width: t.length * 10 }),
+      fillText: (t: string) => calls.push(`text:${t}`),
+      save: () => calls.push('save'),
+      restore: () => calls.push('restore'),
+      translate: () => {},
+      rotate: (a: number) => calls.push(`rotate:${a.toFixed(2)}`),
+      set font(_: string) {},
+      set fillStyle(_: string) {},
+      set textBaseline(_: string) {},
+    };
+    spyOn(HTMLCanvasElement.prototype, 'getContext').and.returnValue(
+      fake as unknown as CanvasRenderingContext2D,
+    );
+
+    const fixture = TestBed.createComponent(WordCloudComponent);
+    fixture.componentInstance.words = Array.from({ length: 10 }, (_, i) => ({
+      text: `word${i}`,
+      count: 10 - i,
+    }));
+    fixture.detectChanges();
+
+    const rotations = calls.filter((c) => c.startsWith('rotate'));
+    expect(rotations.length).toBeGreaterThan(0);
+    // A quarter turn, and nothing else.
+    expect(new Set(rotations).size).toBe(1);
+    // The first word drawn is the most common one, and it is not rotated.
+    expect(calls[0]).toBe('text:word0');
+  });
+
   it('shows nothing rather than failing when nobody answered', () => {
     const fixture = TestBed.createComponent(WordCloudComponent);
     fixture.componentInstance.words = [];
