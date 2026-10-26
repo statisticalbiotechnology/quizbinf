@@ -113,6 +113,14 @@ class Quiz(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    #: Set when the teacher puts the quiz away at the end of a course. Nothing
+    #: is deleted: an archived quiz keeps its questions, lectures and answers,
+    #: and is only left out of the dashboard list and of the term reports, so
+    #: a new course starts from a clean slate without last year's lectures in
+    #: its gradebook denominator.
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     owner: Mapped[User] = relationship()
     questions: Mapped[list["Question"]] = relationship(

@@ -57,16 +57,18 @@ import { SessionFeed } from './session-feed.service';
               <span class="who">{{ r.unmatched.join(', ') }}</span>
             }
             <br />
-            Roster for course {{ r.course_id }}:
-            {{ r.roster_students }} students,
-            @if (r.synced_at) {
-              synced {{ r.synced_at | date: 'd MMM y' }}.
-            } @else {
-              never synced.
+            @if (r.course_id) {
+              Roster for course {{ r.course_id }}:
+              {{ r.roster_students }} students,
+              @if (r.synced_at) {
+                synced {{ r.synced_at | date: 'd MMM y' }}.
+              } @else {
+                never synced.
+              }
             }
             @if (!r.roster_students) {
-              <strong>Nothing is synced for this course, so Canvas will skip
-              every row.</strong> Sync the roster first.
+              <strong>No roster is synced for this course, so Canvas will skip
+              every row.</strong> Sync the roster on the dashboard first.
             }
           </p>
         }

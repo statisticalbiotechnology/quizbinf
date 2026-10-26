@@ -21,7 +21,8 @@ STUDENTS = [
 
 def main() -> None:
     Base.metadata.create_all(bind=engine)
-    course_id = get_settings().canvas_course_id
+    # A fixed course stands in for "the one synced": nothing else is synced here.
+    course_id = get_settings().canvas_course_id or 63598
     db = SessionLocal()
 
     owner = db.query(User).filter(User.username == "teacher").one_or_none()

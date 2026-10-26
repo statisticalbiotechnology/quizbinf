@@ -29,7 +29,7 @@ test('a teacher can reload a session view on a slow connection', async ({ browse
   const inputs = quiz.locator('.add-q input[placeholder="Choice text"]');
   await inputs.nth(0).fill('yes');
   await inputs.nth(1).fill('no');
-  await quiz.locator('.add-q input[type="radio"]').first().check();
+  await quiz.locator('.add-q .choice-row input[type="radio"]').first().check();
   await quiz.getByRole('button', { name: 'Save question' }).click();
   await quiz.getByRole('button', { name: 'Run session' }).click();
   await page.waitForURL('**/teacher/session/*/join');

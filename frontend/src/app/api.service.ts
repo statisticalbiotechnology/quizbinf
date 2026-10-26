@@ -97,6 +97,17 @@ export class ApiService {
   getQuiz(id: number): Observable<Quiz> {
     return this.http.get<Quiz>(`${API_BASE}/api/quizzes/${id}`, this.opts);
   }
+  /** Put a quiz away at the end of a course. Deletes nothing. */
+  archiveQuiz(id: number): Observable<Quiz> {
+    return this.http.post<Quiz>(`${API_BASE}/api/quizzes/${id}/archive`, {}, this.opts);
+  }
+  restoreQuiz(id: number): Observable<Quiz> {
+    return this.http.post<Quiz>(`${API_BASE}/api/quizzes/${id}/restore`, {}, this.opts);
+  }
+  /** A new quiz with the same questions and none of the lectures. */
+  copyQuiz(id: number, title: string): Observable<Quiz> {
+    return this.http.post<Quiz>(`${API_BASE}/api/quizzes/${id}/copy`, { title }, this.opts);
+  }
   /**
    * Render Markdown for the authoring preview.
    *
@@ -304,10 +315,11 @@ export class ApiService {
    * Attendance across every session in a date range — the end-of-term record.
    * Personal data: teacher-only, and not something to project.
    */
-  semesterParticipationCsvUrl(from: string, to: string): string {
+  semesterParticipationCsvUrl(from: string, to: string, archived = false): string {
     const range = new URLSearchParams();
     if (from) range.set('from', from);
     if (to) range.set('to', to);
+    if (archived) range.set('archived', 'true');
     const query = range.toString();
     return `${API_BASE}/api/reports/participation.csv${query ? '?' + query : ''}`;
   }
@@ -325,10 +337,14 @@ export class ApiService {
     to: string,
     assignment: string,
     thresholdPercent?: number,
+    archived = false,
   ): string {
     const query = new URLSearchParams();
     if (from) query.set('from', from);
     if (to) query.set('to', to);
+    // Archived quizzes belong to a course that has ended; their lectures are
+    // left out unless asked for.
+    if (archived) query.set('archived', 'true');
     if (assignment) query.set('assignment', assignment);
     // The server takes a fraction; the form asks for a percentage, which is
     // what a teacher thinks in.

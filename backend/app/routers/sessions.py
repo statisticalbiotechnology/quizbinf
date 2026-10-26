@@ -138,6 +138,13 @@ def create_session(
     quiz = db.get(Quiz, quiz_id)
     if quiz is None or quiz.owner_id != teacher.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Quiz not found")
+    if quiz.archived_at is not None:
+        # Its lectures are left out of the term reports, so a lecture run from
+        # it would silently count for nobody. Copy it, or restore it first.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This quiz is archived. Copy it into a new quiz, or restore it, to run it.",
+        )
     with writing(db):
         session = QuizSession(quiz_id=quiz.id, is_loadtest=loadtest)
         db.add(session)
@@ -452,7 +459,8 @@ def session_canvas_readiness(
     other view on this page.
     """
     session = _owned_session(db, code, teacher)
-    return service.canvas_match_summary(db, session, course_id or settings.canvas_course_id)
+    course = course_id or service.current_course_id(db, settings.canvas_course_id)
+    return service.canvas_match_summary(db, session, course)
 
 
 @router.get("/{code}/canvas-participation.csv", include_in_schema=False)
@@ -476,7 +484,7 @@ def session_canvas_participation_csv(
     restricted to the session's own owner.
     """
     session = _owned_session(db, code, teacher)
-    course = course_id or settings.canvas_course_id
+    course = course_id or service.current_course_id(db, settings.canvas_course_id)
     report = service.session_canvas_participation(db, session, course, threshold)
     column = assignment or f"{report['title']} {report['date']}"
 

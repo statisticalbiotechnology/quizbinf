@@ -41,7 +41,7 @@ async function authorQuestion(page, quizTitle, questionText, choices) {
     await inputs.nth(i).fill(choices[i]);
   }
   // First choice is the correct one.
-  await quiz.locator('.add-q input[type="radio"]').first().check();
+  await quiz.locator('.add-q .choice-row input[type="radio"]').first().check();
   await quiz.getByRole('button', { name: 'Save question' }).click();
   await expect(quiz.locator('ol li').first()).toContainText(questionText);
   return quiz;

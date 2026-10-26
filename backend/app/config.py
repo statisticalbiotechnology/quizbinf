@@ -144,10 +144,11 @@ class Settings(BaseSettings):
     # involved — and acts as that teacher, so it is a secret.
     canvas_base_url: str = "https://canvas.kth.se"
     canvas_token: str = ""
-    # The course this deployment is running. Defaulted rather than literally
-    # hardcoded so next term is a config change, not a rebuild — but it works
-    # out of the box with no configuration at all.
-    canvas_course_id: int = 63598
+    # The course this deployment is running. Usually left unset: the course
+    # synced most recently is then the one in use (`service.current_course_id`),
+    # so a new term needs a sync and no edit to the configuration file. Set it
+    # only to pin a course regardless of what was synced last.
+    canvas_course_id: int | None = None
 
     # OIDC (login.kth.se) — unused until client registration with KTH IT.
     oidc_issuer: str = ""

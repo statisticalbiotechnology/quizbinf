@@ -403,6 +403,20 @@ quizbinf/
   once pasted there, which is to say not at all. The HTML goes through the same
   renderer and sanitiser students saw, so it cannot carry anything the lecture
   did not.
+- **A quiz is archived, never deleted, at the end of a course**
+  (`Quiz.archived_at`). Archiving hides it from the dashboard list (it moves
+  to a collapsed *Archived* section with *Restore*) and **leaves its lectures
+  out of both term reports**, filtered in `sessions_in_range` for the same
+  reason rehearsals are: in the next course's Canvas file, last year's
+  lectures would be lectures none of its students could attend, so every one
+  of them would be marked absent. `?archived=true` brings them back for a
+  late report on the old course. Nothing else changes: questions, lectures
+  and answers stay, and a past lecture's own pages still work by URL. An
+  archived quiz cannot start a lecture (409), since that lecture would count
+  for nobody. *Copy into new quiz* (`POST /api/quizzes/{id}/copy`) is how
+  questions are reused: new question and choice rows, so editing the copy
+  cannot rewrite what earlier students were asked, and no lectures, so none
+  of their answers come along. `tests/test_archive.py`.
 - **Reordering questions is safe at any time**, unlike deleting one: rounds
   point at question ids, never at positions, so the running order moves and
   nothing else does. `PUT /api/quizzes/{id}/questions/order` takes the
@@ -487,8 +501,8 @@ of it that assumes the identity is proven.
   would publish the roster to anyone who opens the page. The field is instead
   a type-ahead over `GET /api/auth/roster-suggest`, which is deliberately
   grudging: nothing until three characters, prefix rather than substring, at
-  most eight matches, rate-limited per client, and scoped to
-  `CANVAS_COURSE_ID`. This still leaks the roster to anyone patient enough to
+  most eight matches, rate-limited per client, and scoped to the current
+  course (below). This still leaks the roster to anyone patient enough to
   try many prefixes — a smaller hole than handing the class over on page load,
   but a hole, and one more reason to retire this mode. A refusal never says
   who *is* enrolled.
@@ -537,6 +551,14 @@ never reaches a client, and is never logged.
   identifier KTH's own IdP exposes — so a student who authenticates through
   Canvas today and through KTH later stays one person instead of becoming two.
   `login_id` (`shiraza@kth.se`) supplies the display username.
+- **The course in use is the one synced most recently**, unless
+  `CANVAS_COURSE_ID` pins one (`service.current_course_id`). It decides which
+  roster the Canvas files match students against. The setting used to default
+  to one fixed course, so a new term silently matched its students against
+  last year's roster and left their ids blank unless somebody edited the
+  configuration file; syncing the new course is something the teacher does
+  anyway, so it now decides. The dashboard's roster panel says which course is
+  in use and why. `tests/test_current_course.py`.
 - **Email is deliberately not stored.** Canvas returns it; the app never sends
   mail, so keeping it would be personal data held for no reason.
 - The roster is personal data: teacher-only endpoints, and the dashboard shows
@@ -960,6 +982,8 @@ alembic upgrade head
 | `PUT /api/quizzes/{id}/questions/order` | teacher | set the running order — the **complete** list of question ids |
 | `GET /api/quizzes/{id}/export.{md,html}?answers=` | teacher | the questions as study material, figures made absolute |
 | `DELETE /api/quizzes/{id}/questions/{qid}` | teacher | delete a question — **409 once it has been asked** |
+| `POST /api/quizzes/{id}/archive`, `…/restore` | teacher | put a quiz away at the end of a course, or bring it back; deletes nothing |
+| `POST /api/quizzes/{id}/copy` | teacher | a new quiz with the same questions and none of the lectures |
 | `POST /api/sessions?quiz_id=&loadtest=` | teacher | start a lecture session; `loadtest=true` marks a rehearsal, kept out of every attendance report |
 | `DELETE /api/sessions/{code}` | teacher | delete a **load-test** session and the throwaway students it made — **409 for a real one** |
 | `POST /api/auth/loadtest-login` | key holder | **rehearsal only:** sign in a throwaway student; off unless `LOADTEST_KEY` is set |
@@ -971,8 +995,8 @@ alembic upgrade head
 | `GET /api/sessions/{code}/participation` | teacher | **per-student** correctness (personal data) |
 | `GET /api/sessions/{code}/participation.csv` | teacher | the same as CSV |
 | `GET /api/sessions/{code}/canvas-participation.csv?assignment=&threshold=` | teacher | **one lecture** scored out of one, in Canvas's gradebook-import format |
-| `GET /api/reports/participation[.csv]?from=&to=` | teacher | **end of term:** attendance across every session, yes/no per session, no correctness |
-| `GET /api/reports/canvas-participation.csv?assignment=&threshold=` | teacher | 1 point per lecture where ≥75% of bouts were answered, in Canvas's gradebook-import format |
+| `GET /api/reports/participation[.csv]?from=&to=&archived=` | teacher | **end of term:** attendance across every session, yes/no per session, no correctness |
+| `GET /api/reports/canvas-participation.csv?assignment=&threshold=&archived=` | teacher | 1 point per lecture where ≥75% of bouts were answered, in Canvas's gradebook-import format |
 | `GET /api/roster/status` | teacher | is Canvas configured, and what has been synced |
 | `GET /api/roster/courses` | teacher | Canvas courses the token's owner teaches |
 | `POST /api/roster/sync?course_id=` | teacher | mirror a course's students into the local roster |

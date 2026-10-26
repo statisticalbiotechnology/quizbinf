@@ -41,7 +41,7 @@ async function addQuestion(quiz, text, choices) {
     if (i >= 2) await form.getByRole('button', { name: '+ choice' }).click();
     await inputs.nth(i).fill(choices[i]);
   }
-  await form.locator('input[type="radio"]').first().check();
+  await form.locator('.choice-row input[type="radio"]').first().check();
   await form.getByRole('button', { name: 'Save question' }).click();
   await expect(quiz.getByText(text)).toBeVisible();
 }
@@ -78,7 +78,7 @@ test('a question can be edited and the change reaches students', async ({ browse
 
   // Reword a choice, and move which one is correct.
   await editor.locator('input[placeholder="Choice text"]').nth(1).fill('Beta (reworded)');
-  await editor.locator('input[type="radio"]').nth(1).check();
+  await editor.locator('.choice-row input[type="radio"]').nth(1).check();
   await editor.getByRole('button', { name: 'Save changes' }).click();
 
   await expect(quiz.getByRole('button', { name: 'Save changes' })).toHaveCount(0);

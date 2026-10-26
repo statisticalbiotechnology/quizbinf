@@ -448,6 +448,7 @@ def sessions_in_range(
     teacher: User,
     start: date | None = None,
     end: date | None = None,
+    include_archived: bool = False,
 ) -> list[QuizSession]:
     """The teacher's own *lectures*, oldest first, within an optional date range.
 
@@ -469,6 +470,11 @@ def sessions_in_range(
         .where(Quiz.owner_id == teacher.id, QuizSession.is_loadtest.is_(False))
         .order_by(QuizSession.created_at, QuizSession.id)
     )
+    # Archived quizzes belong to a course that has ended. Their lectures stay
+    # out unless asked for, for the reason rehearsals do: in the new course's
+    # Canvas file they would be lectures none of its students could attend.
+    if not include_archived:
+        query = query.where(Quiz.archived_at.is_(None))
     if start is not None:
         query = query.where(QuizSession.created_at >= datetime.combine(start, time.min))
     if end is not None:
@@ -481,6 +487,7 @@ def semester_participation(
     teacher: User,
     start: date | None = None,
     end: date | None = None,
+    include_archived: bool = False,
 ) -> dict:
     """Attendance across every session a teacher ran, for end-of-term reporting.
 
@@ -498,7 +505,7 @@ def semester_participation(
     visible: a strict all-or-nothing verdict would otherwise hide a student
     who answered three of four questions.
     """
-    sessions = sessions_in_range(db, teacher, start, end)
+    sessions = sessions_in_range(db, teacher, start, end, include_archived)
 
     users: dict[int, User] = {}
     # user_id -> session_id -> (pairs_completed, pairs_asked)
@@ -653,6 +660,7 @@ def canvas_participation(
     start: date | None = None,
     end: date | None = None,
     threshold: float = DEFAULT_ANSWER_THRESHOLD,
+    include_archived: bool = False,
 ) -> dict:
     """Attendance for the gradebook: one point per lecture the student worked.
 
@@ -693,7 +701,7 @@ def canvas_participation(
     chances: dict[int, int] = {}
     scored: list[QuizSession] = []
 
-    for session in sessions_in_range(db, teacher, start, end):
+    for session in sessions_in_range(db, teacher, start, end, include_archived):
         seen, taken, ran = session_answering(db, session)
         if not ran:
             continue
@@ -954,6 +962,26 @@ def course_roster(db: Session, course_id: int) -> list[RosterEntry]:
             .where(RosterEntry.course_id == course_id)
             .order_by(RosterEntry.display_name)
         )
+    )
+
+
+def current_course_id(db: Session, configured: int | None) -> int | None:
+    """The Canvas course the attendance files and the roster lookups use.
+
+    `CANVAS_COURSE_ID` when it is set, otherwise the course whose roster was
+    synced most recently. The setting used to default to one fixed course,
+    which meant a new term silently kept matching students against last year's
+    roster unless somebody remembered to edit the configuration file; syncing
+    the new course is something the teacher does anyway, so it now decides.
+    None until anything has been synced.
+    """
+    if configured:
+        return configured
+    return db.scalar(
+        select(RosterEntry.course_id)
+        .group_by(RosterEntry.course_id)
+        .order_by(func.max(RosterEntry.synced_at).desc(), RosterEntry.course_id.desc())
+        .limit(1)
     )
 
 
@@ -1291,3 +1319,42 @@ def pre_post_comparison(db: Session, session: QuizSession, question: Question) -
         if round_.question_id == question.id:
             result[round_.phase.value] = round_histogram(db, round_)
     return result
+
+
+@write_path
+def set_quiz_archived(db: Session, quiz: Quiz, archived: bool) -> Quiz:
+    """Archive a quiz, or bring it back. Reversible, and it deletes nothing."""
+    quiz.archived_at = utcnow() if archived else None
+    db.commit()
+    db.refresh(quiz)
+    return quiz
+
+
+@write_path
+def copy_quiz(db: Session, quiz: Quiz, owner: User, title: str | None = None) -> Quiz:
+    """A new quiz with the same questions, for reuse in a later course.
+
+    Questions and choices are copied, not shared: the copy can be edited
+    without rewriting what last year's students were asked, and it starts with
+    no lectures, so none of last year's answers come with it. Figures are
+    referenced by the same path, which is safe because an uploaded file is
+    never replaced or removed.
+    """
+    copy = Quiz(title=(title or "").strip() or quiz.title, owner_id=owner.id)
+    for question in quiz.questions:
+        new = Question(
+            position=question.position,
+            text=question.text,
+            image_url=question.image_url,
+            kind=question.kind,
+            max_words=question.max_words,
+        )
+        for choice in question.choices:
+            new.choices.append(
+                Choice(position=choice.position, text=choice.text, is_correct=choice.is_correct)
+            )
+        copy.questions.append(new)
+    db.add(copy)
+    db.commit()
+    db.refresh(copy)
+    return copy

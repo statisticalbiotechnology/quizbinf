@@ -46,7 +46,7 @@ test('markdown and an uploaded figure reach the student', async ({ browser }) =>
   const inputs = quiz.locator('.add-q input[placeholder="Choice text"]');
   await inputs.nth(0).fill('Smith-Waterman');
   await inputs.nth(1).fill('Needleman-Wunsch');
-  await quiz.locator('.add-q input[type="radio"]').first().check();
+  await quiz.locator('.add-q .choice-row input[type="radio"]').first().check();
   await quiz.getByRole('button', { name: 'Save question' }).click();
   await expect(quiz.locator('ol li strong').first()).toHaveText('local');
 

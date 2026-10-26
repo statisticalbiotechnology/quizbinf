@@ -39,6 +39,10 @@ def roster_status(
         "canvas_configured": settings.canvas_configured,
         "canvas_base_url": settings.canvas_base_url,
         "courses": service.roster_courses(db, teacher),
+        # Which of them the Canvas files use, and whether that was configured
+        # or simply the one synced last.
+        "current_course_id": service.current_course_id(db, settings.canvas_course_id),
+        "course_pinned": settings.canvas_course_id is not None,
     }
 
 
@@ -65,12 +69,13 @@ def sync(
 ) -> dict:
     """Mirror a Canvas course's student list into the local roster.
 
-    Defaults to the course this deployment is configured for, so the common
-    case needs no argument.
+    Defaults to the course currently in use, so a re-sync needs no argument.
     """
     _require_canvas(settings)
     if course_id is None:
-        course_id = settings.canvas_course_id
+        course_id = service.current_course_id(db, settings.canvas_course_id)
+    if course_id is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Choose a course to sync")
     try:
         students = canvas.list_course_students(
             settings.canvas_base_url, settings.canvas_token, course_id
@@ -89,7 +94,7 @@ def roster(
 ) -> list[dict]:
     """The stored roster for a course. Names of real students — do not project."""
     if course_id is None:
-        course_id = settings.canvas_course_id
+        course_id = service.current_course_id(db, settings.canvas_course_id)
     return [
         {
             "canvas_user_id": e.canvas_user_id,
