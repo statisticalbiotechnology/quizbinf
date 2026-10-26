@@ -28,6 +28,8 @@ from .models import (
     Round,
     SessionParticipant,
     User,
+    WORD_SEPARATOR,
+    split_words,
     utcnow,
 )
 
@@ -111,6 +113,7 @@ def submit_answer(
     user: User,
     choice: Choice | None = None,
     text: str | None = None,
+    words: list[str] | None = None,
 ) -> Answer:
     """Record `user`'s answer; one answer per user per round, last write wins
     while the round is open.
@@ -131,9 +134,15 @@ def submit_answer(
       and updates the row the winner wrote.
     """
     if round_.question.kind is Kind.text:
-        text = normalise_word(text or "")
-        if not text:
+        entries = normalise_words([text] if words is None else words)
+        if not entries:
             raise RuleViolation("Write a word first")
+        limit = round_.question.max_words
+        if len(entries) > limit:
+            raise RuleViolation(
+                "Write one word" if limit == 1 else f"Write at most {limit} words"
+            )
+        text = WORD_SEPARATOR.join(entries)
         choice = None
     else:
         if choice is None:
@@ -974,6 +983,7 @@ def update_question(
     image_url: str | None,
     choices: list,
     kind: Kind | None = None,
+    max_words: int | None = None,
 ) -> Question:
     """Edit a question in place, keeping recorded answers readable.
 
@@ -1025,6 +1035,10 @@ def update_question(
 
     question.text = text
     question.image_url = image_url
+    # Changeable at any time, unlike the kind: answers already recorded keep
+    # the entries they have, and the cloud counts whatever is stored.
+    if max_words is not None:
+        question.max_words = max_words if question.kind is Kind.text else 1
 
     kept: list[Choice] = []
     for position, incoming in enumerate(choices):
@@ -1208,6 +1222,22 @@ def normalise_word(raw: str) -> str:
     return cleaned.strip(" \t.,;:!?\"'()[]").strip()[:MAX_TEXT_ANSWER]
 
 
+def normalise_words(raw: list[str | None]) -> list[str]:
+    """One student's entries, tidied, with blanks and repeats removed.
+
+    A repeat is dropped case-insensitively: writing "networks" three times is
+    one vote for it, not three, so nobody can enlarge their own word.
+    """
+    entries: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        word = normalise_word(item or "")
+        if word and word.casefold() not in seen:
+            seen.add(word.casefold())
+            entries.append(word)
+    return entries
+
+
 def word_cloud(db: Session, round_: Round) -> dict:
     """What a word-cloud round collected, counted and ordered.
 
@@ -1218,12 +1248,16 @@ def word_cloud(db: Session, round_: Round) -> dict:
     seen: dict[str, dict[str, int]] = {}
     answers = 0
     for answer in round_.answers:
-        word = (answer.text or "").strip()
-        if not word:
+        entries = split_words(answer.text)
+        if not entries:
             continue
+        # Students, not entries: a cloud asking for three words from 30
+        # people is 30 answers, and each word's count is how many wrote it.
         answers += 1
-        spellings = seen.setdefault(word.casefold(), {})
-        spellings[word] = spellings.get(word, 0) + 1
+        for word in entries:
+            word = word.strip()
+            spellings = seen.setdefault(word.casefold(), {})
+            spellings[word] = spellings.get(word, 0) + 1
     words = [
         {
             "text": max(spellings.items(), key=lambda kv: (kv[1], kv[0]))[0],

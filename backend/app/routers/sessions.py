@@ -17,7 +17,17 @@ from ..auth import current_teacher, current_user
 from ..config import Settings, get_settings
 from ..db import SessionLocal, get_db, writing
 from ..events import broadcaster
-from ..models import Answer, Choice, Kind, Phase, Question, Quiz, QuizSession, User
+from ..models import (
+    Answer,
+    Choice,
+    Kind,
+    Phase,
+    Question,
+    Quiz,
+    QuizSession,
+    User,
+    split_words,
+)
 from ..public_base import public_base_url
 from ..schemas import (
     AnswerIn,
@@ -51,6 +61,7 @@ def _state(db: Session, session: QuizSession, user: User | None) -> SessionState
     question = open_round.question if open_round else None
     my_choice_id = None
     my_text = None
+    my_words: list[str] = []
     if open_round and user:
         answer = db.scalar(
             select(Answer).where(
@@ -58,7 +69,9 @@ def _state(db: Session, session: QuizSession, user: User | None) -> SessionState
             )
         )
         my_choice_id = answer.choice_id if answer else None
-        my_text = answer.text if answer else None
+        my_words = split_words(answer.text) if answer else []
+        # Joined for display, and for a phone still on the single-word build.
+        my_text = ", ".join(my_words) or None
     return SessionState(
         code=session.code,
         # The teacher view loads the session's questions from this; matching on
@@ -69,6 +82,7 @@ def _state(db: Session, session: QuizSession, user: User | None) -> SessionState
         question=question,
         my_choice_id=my_choice_id,
         my_text=my_text,
+        my_words=my_words,
     )
 
 
@@ -646,10 +660,16 @@ def submit_answer(
         if choice is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Choice not found")
     try:
-        answer = service.submit_answer(db, round_, user, choice, body.text)
+        answer = service.submit_answer(db, round_, user, choice, words=body.words)
     except service.RuleViolation as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
-    return {"ok": True, "choice_id": answer.choice_id, "text": answer.text}
+    words = split_words(answer.text)
+    return {
+        "ok": True,
+        "choice_id": answer.choice_id,
+        "text": ", ".join(words) or None,
+        "words": words,
+    }
 
 
 def _join_session(code: str, user_id: int) -> str:

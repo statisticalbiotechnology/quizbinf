@@ -136,23 +136,33 @@ describe('StudentSessionComponent answering under load', () => {
   }));
 
   it('sends a word for a cloud question, and re-sends it through a 502', fakeAsync(() => {
-    component.word = '  alignment ';
+    component.words = ['  alignment '];
     component.sendWord();
 
     const first = answers();
     expect(first.length).toBe(1);
     // Trimmed, because what reaches the cloud is what the student meant.
-    expect(first[0].request.body).toEqual({ text: 'alignment' });
+    expect(first[0].request.body).toEqual({ words: ['alignment'] });
     first[0].flush('<html>nginx</html>', { status: 502, statusText: 'Bad Gateway' });
     expect(component.sent()).toBeFalse();
 
     tick(2000);
     const retry = answers();
     expect(retry.length).toBe(1);
-    retry[0].flush({ ok: true, choice_id: null, text: 'alignment' });
+    retry[0].flush({ ok: true, choice_id: null, text: 'alignment', words: ['alignment'] });
 
     expect(component.sent()).toBeTrue();
     expect(component.sendError()).toBe('');
+  }));
+
+  it('sends only the filled entries of a several-word cloud', fakeAsync(() => {
+    component.words = ['networks', '  ', ' emergence '];
+    component.sendWord();
+
+    const sent = answers();
+    expect(sent.length).toBe(1);
+    expect(sent[0].request.body).toEqual({ words: ['networks', 'emergence'] });
+    sent[0].flush({ ok: true });
   }));
 
   afterEach(() => http.verify());

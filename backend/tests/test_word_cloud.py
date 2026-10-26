@@ -244,3 +244,108 @@ def test_writing_a_word_is_a_pass_in_the_participation_report(teacher_client, le
     line = next(line for line in csv_text.splitlines() if line.startswith("stu20,"))
     assert ",passed,-," in line
     assert "wrong" not in line
+
+
+# --- several words per student --------------------------------------------
+
+
+def make_three_word_lecture(client) -> tuple[int, str]:
+    quiz = client.post("/api/quizzes", json={"title": "Systems biology"}).json()
+    resp = client.post(
+        f"/api/quizzes/{quiz['id']}/questions",
+        json={
+            "text": "Three words that describe systems biology",
+            "kind": "text",
+            "max_words": 3,
+            "choices": [],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["max_words"] == 3
+    code = client.post(f"/api/sessions?quiz_id={quiz['id']}").json()["code"]
+    return resp.json()["id"], code
+
+
+def test_a_cloud_can_ask_for_several_words_and_counts_each(teacher_client):
+    """Each entry is its own word in the cloud, while the student is still
+    one answer: the count under the cloud is people, not words."""
+    question_id, code = make_three_word_lecture(teacher_client)
+    round_id = open_round(teacher_client, code, question_id).json()["id"]
+    assert answer_as(code, "sb1", words=["networks", "modelling", "Emergence"]) == 200
+    assert answer_as(code, "sb2", words=["Networks", "feedback", ""]) == 200
+    assert answer_as(code, "sb3", words=["emergence"]) == 200
+    teacher_client.post(f"/api/sessions/{code}/rounds/{round_id}/close")
+
+    cloud = teacher_client.get(f"/api/sessions/{code}/questions/{question_id}/cloud").json()
+    counts = {w["text"].casefold(): w["count"] for w in cloud["words"]}
+    assert counts == {"networks": 2, "emergence": 2, "modelling": 1, "feedback": 1}
+    assert cloud["answers"] == 3
+
+
+def test_more_words_than_asked_for_are_refused(teacher_client):
+    question_id, code = make_three_word_lecture(teacher_client)
+    open_round(teacher_client, code, question_id)
+    assert answer_as(code, "sb4", words=["a", "b", "c", "d"]) == 409
+
+
+def test_a_repeated_word_counts_once_for_its_writer(teacher_client):
+    """Writing "networks" three times is one vote, not a way to enlarge it."""
+    question_id, code = make_three_word_lecture(teacher_client)
+    round_id = open_round(teacher_client, code, question_id).json()["id"]
+    answer_as(code, "sb5", words=["networks", "Networks", "networks!"])
+    teacher_client.post(f"/api/sessions/{code}/rounds/{round_id}/close")
+
+    cloud = teacher_client.get(f"/api/sessions/{code}/questions/{question_id}/cloud").json()
+    assert cloud["words"] == [{"text": "networks", "count": 1}]
+
+
+def test_a_student_gets_their_own_words_back(teacher_client):
+    question_id, code = make_three_word_lecture(teacher_client)
+    open_round(teacher_client, code, question_id)
+    student = TestClient(app)
+    login(student, "sb6")
+    student.post(f"/api/sessions/{code}/answers", json={"words": ["omics", "models"]})
+
+    state = student.get(f"/api/sessions/{code}/state").json()
+    assert state["my_words"] == ["omics", "models"]
+    assert state["my_text"] == "omics, models"
+
+
+def test_a_single_text_still_answers_a_cloud(teacher_client, lecture):
+    """The form a phone on the previous build sends, mid-lecture."""
+    _quiz_id, question_id, code = lecture
+    open_round(teacher_client, code, question_id)
+    assert answer_as(code, "sb7", text="genomics") == 200
+    assert answer_as(code, "sb8", words=["one", "two"]) == 409  # this cloud asks for one
+
+
+def test_several_words_are_still_one_answer_for_attendance(teacher_client):
+    question_id, code = make_three_word_lecture(teacher_client)
+    round_id = open_round(teacher_client, code, question_id).json()["id"]
+    answer_as(code, "sb9", words=["networks", "models", "data"])
+    teacher_client.post(f"/api/sessions/{code}/rounds/{round_id}/close")
+
+    rows = teacher_client.get(f"/api/sessions/{code}/participation").json()["rows"]
+    row = next(r for r in rows if r["username"] == "sb9")
+    assert row["answered"] == 1
+    assert row["answers"][0]["pre"] is True
+
+
+def test_the_word_count_is_bounded(teacher_client):
+    quiz = teacher_client.post("/api/quizzes", json={"title": "Bounds"}).json()
+    resp = teacher_client.post(
+        f"/api/quizzes/{quiz['id']}/questions",
+        json={"text": "Too many", "kind": "text", "max_words": 6, "choices": []},
+    )
+    assert resp.status_code == 422
+
+
+def test_the_word_count_can_be_changed_by_editing(teacher_client):
+    question_id, code = make_three_word_lecture(teacher_client)
+    quiz_id = teacher_client.get(f"/api/sessions/{code}/state").json()["quiz_id"]
+    resp = teacher_client.put(
+        f"/api/quizzes/{quiz_id}/questions/{question_id}",
+        json={"text": "Two words", "kind": "text", "max_words": 2, "choices": []},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["max_words"] == 2

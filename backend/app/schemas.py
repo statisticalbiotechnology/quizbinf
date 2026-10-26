@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from .markdown import render as render_markdown
-from .models import MAX_TEXT_ANSWER, Kind, Phase, Role
+from .models import MAX_TEXT_ANSWER, MAX_WORDS, Kind, Phase, Role
 
 
 class UserOut(BaseModel):
@@ -69,6 +69,8 @@ class QuestionIn(BaseModel):
     text: str = Field(min_length=1)
     image_url: str | None = None
     kind: Kind = Kind.choice
+    #: For a word cloud: how many entries each student may write.
+    max_words: int = Field(default=1, ge=1, le=MAX_WORDS)
     choices: list[ChoiceIn] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -93,6 +95,7 @@ class QuestionEdit(BaseModel):
     text: str = Field(min_length=1)
     image_url: str | None = None
     kind: Kind = Kind.choice
+    max_words: int = Field(default=1, ge=1, le=MAX_WORDS)
     choices: list[ChoiceEdit] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -132,6 +135,7 @@ class QuestionOut(BaseModel):
     text: str
     image_url: str | None
     kind: Kind
+    max_words: int
     choices: list[ChoiceOut]
 
     @computed_field
@@ -170,17 +174,29 @@ class OpenRoundIn(BaseModel):
 
 
 class AnswerIn(BaseModel):
-    """One submission: a chosen choice, or a word for the cloud."""
+    """One submission: a chosen choice, or the words for a cloud.
+
+    `words` carries a cloud answer. `text` is the single-word form it
+    replaced, still accepted so a phone holding the previous build mid-lecture
+    is not refused; it means the same as a one-element `words`.
+    """
 
     choice_id: int | None = None
     text: str | None = Field(default=None, max_length=MAX_TEXT_ANSWER)
+    words: list[str] | None = Field(default=None, max_length=MAX_WORDS)
 
     @model_validator(mode="after")
-    def one_or_the_other(self) -> "AnswerIn":
-        if (self.choice_id is None) == (self.text is None):
-            raise ValueError("Send either choice_id or text")
-        if self.text is not None and not self.text.strip():
-            raise ValueError("Write a word first")
+    def exactly_one(self) -> "AnswerIn":
+        sent = [v for v in (self.choice_id, self.text, self.words) if v is not None]
+        if len(sent) != 1:
+            raise ValueError("Send either choice_id or words")
+        if self.text is not None:
+            self.words, self.text = [self.text], None
+        if self.words is not None:
+            if any(len(w) > MAX_TEXT_ANSWER for w in self.words):
+                raise ValueError(f"Each entry is at most {MAX_TEXT_ANSWER} characters")
+            if not any(w.strip() for w in self.words):
+                raise ValueError("Write a word first")
         return self
 
 
@@ -208,6 +224,8 @@ class SessionState(BaseModel):
     #: What this student wrote, for a word-cloud question. Their own only:
     #: the cloud itself is the teacher's to project, after the round is halted.
     my_text: str | None = None
+    #: The same, entry by entry, for a cloud that asks for several words.
+    my_words: list[str] = Field(default_factory=list)
 
 
 class HistogramOut(BaseModel):

@@ -35,17 +35,19 @@ const RETRYABLE_STATUSES = [0, 502, 503, 504];
             <img [src]="s.question.image_url" alt="" />
           }
           @if (s.question.kind === 'text') {
-            <div class="word">
-              <input
-                type="text"
-                [(ngModel)]="word"
-                name="word"
-                maxlength="40"
-                placeholder="One word or a short phrase"
-                autocomplete="off"
-                (keyup.enter)="sendWord()"
-              />
-              <button class="send" (click)="sendWord()" [disabled]="!word.trim()">
+            <div class="word" [class.several]="words.length > 1">
+              @for (w of words; track $index) {
+                <input
+                  type="text"
+                  [(ngModel)]="words[$index]"
+                  [name]="'word' + $index"
+                  maxlength="40"
+                  [placeholder]="words.length > 1 ? 'Word ' + ($index + 1) : 'One word or a short phrase'"
+                  autocomplete="off"
+                  (keyup.enter)="sendWord()"
+                />
+              }
+              <button class="send" (click)="sendWord()" [disabled]="!hasWords()">
                 {{ sent() ? 'Change' : 'Send' }}
               </button>
             </div>
@@ -99,6 +101,7 @@ const RETRYABLE_STATUSES = [0, 502, 503, 504];
                     border-radius: 8px; }
       .word .send { padding: 0.9rem 1.2rem; font-size: 1rem; border-radius: 8px;
                     border: 2px solid #2c7; background: #eafaf1; }
+      .word.several { flex-direction: column; }
       .waiting { color: #777; text-align: center; margin-top: 2rem; }
       .saved { color: #2c7; margin-top: 1rem; }
       .sending { color: #777; margin-top: 1rem; }
@@ -114,7 +117,9 @@ export class StudentSessionComponent implements OnInit, OnDestroy {
   /** Whether this student's word is in — the cloud's version of `selected`. */
   sent = signal(false);
   /** What they are writing, for a word-cloud question. */
-  word = '';
+  words: string[] = [''];
+  /** The question `words` was laid out for, so a new one starts empty. */
+  private wordsFor: number | null = null;
   sendError = signal<string>('');
   private code = '';
   private teardown?: () => void;
@@ -164,9 +169,22 @@ export class StudentSessionComponent implements OnInit, OnDestroy {
     // The server tells us our own current answer; trust it over local state.
     this.selected.set(s.my_choice_id);
     this.sent.set(!!s.my_text);
-    // Only adopt the server's word when the box is untouched, so a resync
-    // mid-typing does not overwrite what is being written.
-    if (s.my_text && !this.word.trim()) this.word = s.my_text;
+    const q = s.question;
+    if (q?.kind !== 'text') return;
+    const mine = s.my_words ?? (s.my_text ? [s.my_text] : []);
+    const slots = Math.max(1, q.max_words ?? 1);
+    if (q.id !== this.wordsFor) {
+      this.wordsFor = q.id;
+      this.words = Array.from({ length: slots }, (_, i) => mine[i] ?? '');
+    } else if (!this.hasWords() && mine.length) {
+      // Only adopt the server's words when the boxes are untouched, so a
+      // resync mid-typing does not overwrite what is being written.
+      this.words = Array.from({ length: slots }, (_, i) => mine[i] ?? '');
+    }
+  }
+
+  hasWords(): boolean {
+    return this.words.some((w) => w.trim());
   }
 
   /**
@@ -177,11 +195,11 @@ export class StudentSessionComponent implements OnInit, OnDestroy {
    * who looks like they were not there.
    */
   sendWord(attempt = 0): void {
-    const text = this.word.trim();
-    if (!text) return;
+    const words = this.words.map((w) => w.trim()).filter((w) => w);
+    if (!words.length) return;
     this.sending.set(true);
     this.sendError.set('');
-    this.api.submitWord(this.code, text).subscribe({
+    this.api.submitWords(this.code, words).subscribe({
       next: () => {
         this.sent.set(true);
         this.sending.set(false);
