@@ -135,9 +135,28 @@ class Kind(str, enum.Enum):
     text = "text"
 
 
-#: The longest word-cloud answer. A cloud is unreadable past a few words, and
-#: a phone keyboard mid-lecture argues for the same.
+#: The longest single entry in a word cloud. A cloud is unreadable past a few
+#: words, and a phone keyboard mid-lecture argues for the same.
 MAX_TEXT_ANSWER = 40
+
+#: How many entries a word-cloud question may ask each student for ("three
+#: words that describe systems biology"). Five is already more than a phone
+#: screen shows comfortably, and more than a cloud needs from each person.
+MAX_WORDS = 5
+
+#: A student's entries are kept in one answer row, one per line, so that a
+#: word cloud stays one answer per student per round like every other
+#: question: the attendance files, the live count and "last write wins" all
+#: rest on that, and none of them has to learn that a cloud is different. A
+#: line break cannot be typed into the single-line fields the phone offers,
+#: and `normalise_word` removes any that arrive another way.
+WORD_SEPARATOR = "\n"
+MAX_ANSWER_TEXT = MAX_WORDS * (MAX_TEXT_ANSWER + len(WORD_SEPARATOR))
+
+
+def split_words(text: str | None) -> list[str]:
+    """The entries of one stored word-cloud answer."""
+    return [w for w in (text or "").split(WORD_SEPARATOR) if w.strip()]
 
 
 class Question(Base):
@@ -151,6 +170,9 @@ class Question(Base):
     kind: Mapped[Kind] = mapped_column(
         Enum(Kind), nullable=False, default=Kind.choice, server_default=Kind.choice.value
     )
+    #: For a word cloud, how many entries each student may write. Ignored for
+    #: multiple choice, where it stays at its default.
+    max_words: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
 
     quiz: Mapped[Quiz] = relationship(back_populates="questions")
     choices: Mapped[list["Choice"]] = relationship(
@@ -270,7 +292,8 @@ class Answer(Base):
     #: of the two is set, and the constraint below is what keeps that true of
     #: rows written by anything other than this application.
     choice_id: Mapped[int | None] = mapped_column(ForeignKey("choices.id"), nullable=True)
-    text: Mapped[str | None] = mapped_column(String(MAX_TEXT_ANSWER), nullable=True)
+    #: A word-cloud answer: up to `MAX_WORDS` entries, one per line.
+    text: Mapped[str | None] = mapped_column(String(MAX_ANSWER_TEXT), nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     round: Mapped[Round] = relationship(back_populates="answers")

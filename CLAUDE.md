@@ -101,7 +101,15 @@ Key product requirements:
   removed: no right answer, no second bout, no bars. Students write one word
   or short phrase (`MAX_TEXT_ANSWER`, 40 characters) and `Answer.text` holds
   it instead of `choice_id`; a check constraint keeps exactly one of the two
-  set. Three properties carry over unchanged, and should stay that way:
+  set. A cloud may ask for several entries (`Question.max_words`, at most
+  `MAX_WORDS` = 5, e.g. *three words that describe systems biology*). They
+  are kept **in the student's one answer row, one per line**, not as a row
+  each: a cloud is then still one answer per student per round, so the
+  attendance files, the live count and "last write wins" need no special
+  case. Each entry counts once in the cloud, a student's repeats are dropped
+  so nobody can enlarge their own word, and the count under the cloud is
+  students, not entries. Three properties carry over unchanged, and should
+  stay that way:
   - **Nothing is projected while the window is open.** The cloud is refused
     (409) until the round is halted, for the reason the histogram is: a cloud
     filling in live tells the room what to write, and puts whatever anybody

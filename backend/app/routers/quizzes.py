@@ -8,7 +8,7 @@ from .. import export, service
 from ..auth import current_teacher
 from ..config import Settings, get_settings
 from ..db import get_db, writing
-from ..models import Choice, Question, Quiz, User
+from ..models import Choice, Kind, Question, Quiz, User
 from ..public_base import public_base_url
 from ..schemas import (
     QuestionEdit,
@@ -115,6 +115,7 @@ def add_question(
             text=body.text,
             image_url=body.image_url,
             kind=body.kind,
+            max_words=body.max_words if body.kind is Kind.text else 1,
         )
         for i, c in enumerate(body.choices):
             question.choices.append(Choice(position=i, text=c.text, is_correct=c.is_correct))
@@ -157,7 +158,7 @@ def edit_question(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Question not found")
     try:
         return service.update_question(
-            db, question, body.text, body.image_url, body.choices, body.kind
+            db, question, body.text, body.image_url, body.choices, body.kind, body.max_words
         )
     except service.RuleViolation as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))

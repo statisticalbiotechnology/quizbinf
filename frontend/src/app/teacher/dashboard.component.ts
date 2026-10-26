@@ -248,7 +248,10 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                        correct answer is exactly what must not be read from
                        the back of the room. Reveal it behind a click. -->
                   @if (q.kind === 'text') {
-                    <p class="kind-note">Word cloud — students write a word; asked once.</p>
+                    <p class="kind-note">
+                      Word cloud — students write
+                      {{ q.max_words > 1 ? 'up to ' + q.max_words + ' words' : 'a word' }}; asked once.
+                    </p>
                   }
                   <ul>
                     @for (c of q.choices; track c.id) {
@@ -368,6 +371,7 @@ export class TeacherDashboardComponent implements OnInit {
     return {
       text: '',
       kind: 'choice' as const,
+      max_words: 1,
       choices: [
         { text: '', is_correct: false },
         { text: '', is_correct: false },
@@ -467,6 +471,7 @@ export class TeacherDashboardComponent implements OnInit {
     this.editDraft = {
       text: q.text,
       kind: q.kind,
+      max_words: q.max_words ?? 1,
       choices: q.choices.map((c) => ({
         id: c.id,
         text: c.text,
@@ -491,6 +496,7 @@ export class TeacherDashboardComponent implements OnInit {
         text: this.editDraft.text.trim(),
         image_url: null,
         kind: this.editDraft.kind,
+        max_words: this.editDraft.max_words,
         choices:
           this.editDraft.kind === 'text'
             ? []
@@ -565,6 +571,7 @@ export class TeacherDashboardComponent implements OnInit {
         text: this.draft.text.trim(),
         image_url: null,
         kind: this.draft.kind,
+        max_words: this.draft.max_words,
         choices: this.draft.kind === 'text' ? [] : choices,
       })
       .subscribe({

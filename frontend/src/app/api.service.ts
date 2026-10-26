@@ -375,11 +375,11 @@ export class ApiService {
     );
   }
 
-  /** The same submission, for a word-cloud question. */
-  submitWord(code: string, text: string): Observable<unknown> {
+  /** The same submission, for a word-cloud question: one or more entries. */
+  submitWords(code: string, words: string[]): Observable<unknown> {
     return this.http.post(
       `${API_BASE}/api/sessions/${code}/answers`,
-      { text },
+      { words },
       this.opts,
     );
   }

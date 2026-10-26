@@ -29,6 +29,8 @@ export interface Question {
   text_html: string;
   image_url: string | null;
   kind: QuestionKind;
+  /** For a word cloud: how many entries each student may write. */
+  max_words: number;
   choices: Choice[];
 }
 
@@ -55,6 +57,8 @@ export interface SessionState {
   my_choice_id: number | null;
   /** What this student wrote, for a word-cloud question. Their own only. */
   my_text: string | null;
+  /** The same, entry by entry. Absent from a server older than this field. */
+  my_words?: string[];
 }
 
 export interface Word {
@@ -143,6 +147,7 @@ export interface QuestionInput {
   text: string;
   image_url: string | null;
   kind: QuestionKind;
+  max_words: number;
   choices: ChoiceInput[];
 }
 
@@ -195,6 +200,7 @@ export interface QuestionEditInput {
   text: string;
   image_url: string | null;
   kind: QuestionKind;
+  max_words: number;
   choices: ChoiceEditInput[];
 }
 

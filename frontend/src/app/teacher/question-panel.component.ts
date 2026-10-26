@@ -22,7 +22,13 @@ import { SessionFeed } from './session-feed.service';
           <span [innerHTML]="q.text_html"></span>
         </div>
         @if (q.kind === 'text') {
-          <p class="write">Write one word or a short phrase on your phone.</p>
+          <p class="write">
+            @if (q.max_words > 1) {
+              Write up to {{ q.max_words }} words or short phrases on your phone.
+            } @else {
+              Write one word or a short phrase on your phone.
+            }
+          </p>
         }
         <ol class="choices">
           @for (c of q.choices; track c.id) {

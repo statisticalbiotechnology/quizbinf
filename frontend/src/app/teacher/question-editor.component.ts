@@ -15,8 +15,13 @@ export interface QuestionDraft {
   text: string;
   /** 'choice' is peer instruction; 'text' collects words for a cloud. */
   kind: QuestionKind;
+  /** For a word cloud: how many entries each student may write. */
+  max_words: number;
   choices: ChoiceDraft[];
 }
+
+/** The most entries a cloud may ask for; the server holds the same limit. */
+export const MAX_WORDS = 5;
 
 /**
  * The authoring form, used both to add a question and to edit one.
@@ -94,11 +99,20 @@ export interface QuestionDraft {
           </span>
         } @else if (draft.kind === 'text') {
           <span class="kind-hint">
-            students write one word or short phrase; asked once, no right
-            answer, shown as a cloud after you halt it
+            asked once, no right answer, shown as a cloud after you halt it
           </span>
         }
       </div>
+      @if (draft.kind === 'text') {
+        <label class="words">
+          Each student writes
+          <select [(ngModel)]="draft.max_words" [name]="'maxWords' + formId">
+            @for (n of wordCounts; track n) {
+              <option [ngValue]="n">{{ n === 1 ? '1 word or phrase' : n + ' words or phrases' }}</option>
+            }
+          </select>
+        </label>
+      }
 
       @if (draft.kind === 'choice') {
       @for (c of draft.choices; track $index) {
@@ -142,6 +156,7 @@ export interface QuestionDraft {
               margin: 0.5rem 0; font-size: 0.9rem; }
       .kind label { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
       .kind-hint { color: #666; font-size: 0.85rem; }
+      .words { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0.25rem 0 0.5rem; }
       .choice-row { display: flex; gap: 0.5rem; align-items: center; margin: 0.3rem 0; }
       .mark { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer;
               border: 1px solid var(--border); border-radius: 6px; padding: 0.25rem 0.5rem;
@@ -265,6 +280,8 @@ export class QuestionEditorComponent implements OnDestroy {
    * choices they typed; `save` sends none for a word cloud, and the server
    * refuses any that slip through.
    */
+  readonly wordCounts = Array.from({ length: MAX_WORDS }, (_, i) => i + 1);
+
   setKind(kind: QuestionKind): void {
     if (this.lockedKind) return;
     this.draft.kind = kind;

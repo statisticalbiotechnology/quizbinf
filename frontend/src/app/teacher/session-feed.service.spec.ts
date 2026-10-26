@@ -31,6 +31,7 @@ function question(id: number, position: number): Question {
     text_html: `<p>q${id}</p>`,
     image_url: null,
     kind: 'choice',
+    max_words: 1,
     choices: choices('right', 'wrong'),
   };
 }
