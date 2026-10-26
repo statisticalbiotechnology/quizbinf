@@ -31,7 +31,7 @@ test('round controls appear when two quizzes share a title', async ({ browser })
   const inputs = second.locator('.add-q input[placeholder="Choice text"]');
   await inputs.nth(0).fill('Smith-Waterman');
   await inputs.nth(1).fill('Needleman-Wunsch');
-  await second.locator('.add-q input[type="radio"]').first().check();
+  await second.locator('.add-q .choice-row input[type="radio"]').first().check();
   await second.getByRole('button', { name: 'Save question' }).click();
   await expect(second.locator('ol li').first()).toContainText('Which aligns locally?');
 

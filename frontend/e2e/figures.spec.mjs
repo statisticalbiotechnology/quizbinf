@@ -48,7 +48,7 @@ async function authorQuestionWithFigure(page, title, text) {
   const inputs = quiz.locator('.add-q input[placeholder="Choice text"]');
   await inputs.nth(0).fill('6');
   await inputs.nth(1).fill('4');
-  await quiz.locator('.add-q input[type="radio"]').first().check();
+  await quiz.locator('.add-q .choice-row input[type="radio"]').first().check();
   await quiz.getByRole('button', { name: 'Save question' }).click();
   return quiz;
 }

@@ -28,7 +28,7 @@ test('correct answer is chosen deliberately, and participation is reported', asy
   await inputs.nth(1).fill('Needleman-Wunsch');
 
   // --- nothing is marked correct until the teacher says so ---
-  const marks = quiz.locator('.add-q input[type="radio"]');
+  const marks = quiz.locator('.add-q .choice-row input[type="radio"]');
   expect(await marks.nth(0).isChecked(), 'first choice was pre-selected as correct').toBe(
     false,
   );

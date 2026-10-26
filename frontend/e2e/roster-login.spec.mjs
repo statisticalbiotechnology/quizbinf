@@ -71,7 +71,7 @@ test('a scanned session survives the trip through login', async ({ browser }) =>
   const choices = quiz.locator('input[placeholder="Choice text"]');
   await choices.nth(0).fill('Yes it does');
   await choices.nth(1).fill('No');
-  await quiz.locator('input[type="radio"]').first().check();
+  await quiz.locator('.choice-row input[type="radio"]').first().check();
   await quiz.getByRole('button', { name: 'Save question' }).click();
   await quiz.getByRole('button', { name: 'Run session' }).click();
   await teacher.waitForURL('**/teacher/session/*/join');

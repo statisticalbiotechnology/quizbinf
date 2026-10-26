@@ -34,7 +34,7 @@ async function addQuestion(quiz, text, choices) {
   await quiz.locator('textarea[name="qtext"]').fill(text);
   const inputs = quiz.locator('.add-q input[placeholder="Choice text"]');
   for (let i = 0; i < choices.length; i++) await inputs.nth(i).fill(choices[i]);
-  await quiz.locator('.add-q input[type="radio"]').first().check();
+  await quiz.locator('.add-q .choice-row input[type="radio"]').first().check();
   await quiz.getByRole('button', { name: 'Save question' }).click();
   // Markdown is rendered, so match the drawn text rather than the source.
   const rendered = text.replace(/\*\*/g, '');

@@ -27,7 +27,7 @@ test('a teacher exports attendance across sessions', async ({ browser }) => {
   const choices = quiz.locator('.add-q input[placeholder="Choice text"]');
   await choices.nth(0).fill('Helps a lot');
   await choices.nth(1).fill('Hinders');
-  await quiz.locator('.add-q input[type="radio"]').first().check();
+  await quiz.locator('.add-q .choice-row input[type="radio"]').first().check();
   await quiz.getByRole('button', { name: 'Save question' }).click();
   await quiz.getByRole('button', { name: 'Run session' }).click();
   await page.waitForURL('**/teacher/session/*/join');
