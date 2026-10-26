@@ -37,6 +37,8 @@ export interface Question {
 export interface Quiz {
   id: number;
   title: string;
+  /** Set once the quiz is put away at the end of a course; null while in use. */
+  archived_at?: string | null;
   questions: Question[];
 }
 

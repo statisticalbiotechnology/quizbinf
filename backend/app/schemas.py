@@ -117,6 +117,12 @@ class QuizIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 
 
+class QuizCopyIn(BaseModel):
+    """The new quiz's title; blank takes the old one."""
+
+    title: str | None = Field(default=None, max_length=200)
+
+
 class ChoiceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -157,6 +163,7 @@ class QuizOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     title: str
+    archived_at: datetime | None = None
     questions: list[QuestionTeacherOut]
 
 

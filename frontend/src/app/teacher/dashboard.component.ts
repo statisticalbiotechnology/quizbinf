@@ -1,4 +1,5 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
+import { Component, OnInit, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
@@ -9,7 +10,7 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
 @Component({
   selector: 'app-teacher-dashboard',
   standalone: true,
-  imports: [FormsModule, QuestionEditorComponent],
+  imports: [DatePipe, FormsModule, QuestionEditorComponent],
   template: `
     <div class="wrap">
       @if (ephemeralStorage()) {
@@ -36,7 +37,14 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
           <a class="download" [href]="semesterCsvUrl()" download>Download CSV</a>
           <span class="note">a spreadsheet to read — not the Canvas file</span>
         </div>
-        <p class="note">Leave the dates empty for everything.</p>
+        <p class="note">
+          Leave the dates empty for everything. Lectures from archived quizzes
+          are left out of both files unless
+          <label class="inline">
+            <input type="checkbox" [(ngModel)]="reportArchived" name="archived" />
+            included
+          </label>.
+        </p>
 
         <p class="note">
           <strong>For the Canvas gradebook:</strong> the second file below is
@@ -191,11 +199,21 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
         <button [disabled]="!newTitle.trim()">Create</button>
       </form>
 
-      @for (quiz of quizzes(); track quiz.id) {
+      @for (quiz of activeQuizzes(); track quiz.id) {
         <section class="quiz">
           <header>
             <h2>{{ quiz.title }}</h2>
-            <button (click)="startSession(quiz)">Run session ▶</button>
+            <span class="quiz-actions">
+              <button
+                type="button"
+                class="archive"
+                (click)="archiveQuiz(quiz)"
+                title="Hide it from this list and from the term reports. Deletes nothing."
+              >
+                Archive
+              </button>
+              <button (click)="startSession(quiz)">Run session ▶</button>
+            </span>
           </header>
 
           @if (reorderError(); as msg) {
@@ -284,6 +302,36 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
           </details>
         </section>
       }
+
+      @if (archivedQuizzes().length) {
+        <details class="archived">
+          <summary>Archived quizzes ({{ archivedQuizzes().length }})</summary>
+          <p class="note">
+            Put away with their questions, lectures and answers intact, and left
+            out of the term reports. Copy one to reuse its questions in a new
+            course: the copy starts with no lectures.
+          </p>
+          @if (archiveError(); as msg) {
+            <p class="error">{{ msg }}</p>
+          }
+          <ul>
+            @for (quiz of archivedQuizzes(); track quiz.id) {
+              <li>
+                <span class="title">{{ quiz.title }}</span>
+                <span class="meta">
+                  {{ quiz.questions.length }}
+                  {{ quiz.questions.length === 1 ? 'question' : 'questions' }} · archived
+                  {{ quiz.archived_at | date: 'mediumDate' }}
+                </span>
+                <span class="quiz-actions">
+                  <button type="button" (click)="copyQuiz(quiz)">Copy into new quiz</button>
+                  <button type="button" (click)="restoreQuiz(quiz)">Restore</button>
+                </span>
+              </li>
+            }
+          </ul>
+        </details>
+      }
     </div>
   `,
   styles: [
@@ -302,6 +350,17 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                   padding: 0.35rem 0.7rem; text-decoration: none; color: inherit; }
       .quiz { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
       header { display: flex; justify-content: space-between; align-items: center; }
+      .quiz-actions { display: inline-flex; gap: 0.4rem; align-items: center; }
+      .quiz-actions .archive { color: #555; }
+      .inline { display: inline-flex; align-items: center; gap: 0.2rem; }
+      .archived { border: 1px solid #ddd; border-radius: 8px; padding: 0.6rem 1rem; margin: 1.5rem 0; }
+      .archived summary { cursor: pointer; font-weight: 600; }
+      .archived .note { font-size: 0.85rem; color: #666; }
+      .archived ul { list-style: none; padding: 0; margin: 0; }
+      .archived li { display: flex; flex-wrap: wrap; gap: 0.3rem 0.8rem; align-items: center;
+                     padding: 0.5rem 0; border-top: 1px solid #eee; }
+      .archived .title { font-weight: 600; flex: 1 1 12rem; }
+      .archived .meta { color: #666; font-size: 0.85rem; }
       li.correct { font-weight: 600; color: #2c7; }
       .reveal { font-size: 0.75rem; padding: 0.15rem 0.45rem; margin-top: 0.2rem;
                 color: #777; background: none; }
@@ -323,6 +382,16 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
 })
 export class TeacherDashboardComponent implements OnInit {
   quizzes = signal<Quiz[]>([]);
+  /** The quizzes in use; archived ones are listed apart, collapsed. */
+  activeQuizzes = computed(() => this.quizzes().filter((q) => !q.archived_at));
+  archivedQuizzes = computed(() =>
+    this.quizzes()
+      .filter((q) => !!q.archived_at)
+      .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? '')),
+  );
+  archiveError = signal('');
+  /** Whether the term reports should count lectures from archived quizzes. */
+  reportArchived = false;
   newTitle = '';
   formError = '';
   reportFrom = '';
@@ -436,7 +505,11 @@ export class TeacherDashboardComponent implements OnInit {
   }
 
   semesterCsvUrl(): string {
-    return this.api.semesterParticipationCsvUrl(this.reportFrom, this.reportTo);
+    return this.api.semesterParticipationCsvUrl(
+      this.reportFrom,
+      this.reportTo,
+      this.reportArchived,
+    );
   }
 
   backupUrl(): string {
@@ -449,6 +522,7 @@ export class TeacherDashboardComponent implements OnInit {
       this.reportTo,
       this.canvasAssignment.trim(),
       this.canvasThreshold,
+      this.reportArchived,
     );
   }
 
@@ -581,6 +655,37 @@ export class TeacherDashboardComponent implements OnInit {
         },
         error: () => (this.formError = 'Could not save (need exactly one correct choice).'),
       });
+  }
+
+  /**
+   * Put a quiz away at the end of a course. Reversible and destroys nothing,
+   * so it asks no confirmation: Restore is one click away in the list below.
+   */
+  archiveQuiz(quiz: Quiz): void {
+    this.archiveError.set('');
+    this.api.archiveQuiz(quiz.id).subscribe({
+      next: () => this.reload(),
+      error: () => this.archiveError.set('Could not archive that quiz.'),
+    });
+  }
+
+  restoreQuiz(quiz: Quiz): void {
+    this.archiveError.set('');
+    this.api.restoreQuiz(quiz.id).subscribe({
+      next: () => this.reload(),
+      error: () => this.archiveError.set('Could not restore that quiz.'),
+    });
+  }
+
+  /** Reuse an archived quiz's questions in a new course, without its lectures. */
+  copyQuiz(quiz: Quiz): void {
+    const title = window.prompt('Title of the new quiz', quiz.title);
+    if (title === null) return;
+    this.archiveError.set('');
+    this.api.copyQuiz(quiz.id, title.trim()).subscribe({
+      next: () => this.reload(),
+      error: () => this.archiveError.set('Could not copy that quiz.'),
+    });
   }
 
   startSession(quiz: Quiz): void {

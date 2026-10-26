@@ -51,9 +51,10 @@ def semester_participation(
     teacher: User = Depends(current_teacher),
     start: date | None = Query(None, alias="from"),
     end: date | None = Query(None, alias="to"),
+    archived: bool = Query(False),
 ) -> dict:
     """Attendance per student across every session in the range."""
-    return service.semester_participation(db, teacher, start, end)
+    return service.semester_participation(db, teacher, start, end, archived)
 
 
 @router.get("/canvas-participation.csv", include_in_schema=False)
@@ -66,6 +67,7 @@ def canvas_participation_csv(
     threshold: float = Query(service.DEFAULT_ANSWER_THRESHOLD, ge=0.0, le=1.0),
     start: date | None = Query(None, alias="from"),
     end: date | None = Query(None, alias="to"),
+    archived: bool = Query(False),
 ) -> Response:
     """Attendance in the shape Canvas's gradebook importer reads.
 
@@ -82,7 +84,7 @@ def canvas_participation_csv(
     """
     course = course_id or settings.canvas_course_id
     report = service.canvas_participation(
-        db, teacher, course, start, end, threshold
+        db, teacher, course, start, end, threshold, archived
     )
     total = len(report["sessions"])
 
@@ -110,6 +112,7 @@ def semester_participation_csv(
     teacher: User = Depends(current_teacher),
     start: date | None = Query(None, alias="from"),
     end: date | None = Query(None, alias="to"),
+    archived: bool = Query(False),
 ) -> Response:
     """The same, as a spreadsheet — one row per student, one column per session.
 
@@ -117,7 +120,7 @@ def semester_participation_csv(
     was asked twice. A session where no question ran both bouts has nothing to
     attend and is left blank rather than counted as an absence.
     """
-    report = service.semester_participation(db, teacher, start, end)
+    report = service.semester_participation(db, teacher, start, end, archived)
     sessions = report["sessions"]
 
     buf = io.StringIO()

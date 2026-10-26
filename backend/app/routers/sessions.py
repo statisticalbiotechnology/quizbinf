@@ -138,6 +138,13 @@ def create_session(
     quiz = db.get(Quiz, quiz_id)
     if quiz is None or quiz.owner_id != teacher.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Quiz not found")
+    if quiz.archived_at is not None:
+        # Its lectures are left out of the term reports, so a lecture run from
+        # it would silently count for nobody. Copy it, or restore it first.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This quiz is archived. Copy it into a new quiz, or restore it, to run it.",
+        )
     with writing(db):
         session = QuizSession(quiz_id=quiz.id, is_loadtest=loadtest)
         db.add(session)

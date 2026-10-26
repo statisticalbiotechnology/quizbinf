@@ -15,6 +15,7 @@ from ..schemas import (
     QuestionIn,
     QuestionOrder,
     QuestionTeacherOut,
+    QuizCopyIn,
     QuizIn,
     QuizOut,
 )
@@ -53,6 +54,32 @@ def get_quiz(
     quiz_id: int, db: Session = Depends(get_db), teacher: User = Depends(current_teacher)
 ) -> Quiz:
     return _own_quiz(db, quiz_id, teacher)
+
+
+@router.post("/{quiz_id}/archive", response_model=QuizOut)
+def archive_quiz(
+    quiz_id: int, db: Session = Depends(get_db), teacher: User = Depends(current_teacher)
+) -> Quiz:
+    """Put a quiz away at the end of a course. Deletes nothing; see `restore`."""
+    return service.set_quiz_archived(db, _own_quiz(db, quiz_id, teacher), True)
+
+
+@router.post("/{quiz_id}/restore", response_model=QuizOut)
+def restore_quiz(
+    quiz_id: int, db: Session = Depends(get_db), teacher: User = Depends(current_teacher)
+) -> Quiz:
+    return service.set_quiz_archived(db, _own_quiz(db, quiz_id, teacher), False)
+
+
+@router.post("/{quiz_id}/copy", response_model=QuizOut, status_code=status.HTTP_201_CREATED)
+def copy_quiz(
+    quiz_id: int,
+    body: QuizCopyIn,
+    db: Session = Depends(get_db),
+    teacher: User = Depends(current_teacher),
+) -> Quiz:
+    """A new quiz with this one's questions and none of its lectures."""
+    return service.copy_quiz(db, _own_quiz(db, quiz_id, teacher), teacher, body.title)
 
 
 @router.get("/{quiz_id}/export.md", include_in_schema=False)
