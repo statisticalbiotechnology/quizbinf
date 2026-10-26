@@ -82,7 +82,7 @@ def canvas_participation_csv(
     of who was in the room, since a login proves only that someone knows the
     session code.
     """
-    course = course_id or settings.canvas_course_id
+    course = course_id or service.current_course_id(db, settings.canvas_course_id)
     report = service.canvas_participation(
         db, teacher, course, start, end, threshold, archived
     )

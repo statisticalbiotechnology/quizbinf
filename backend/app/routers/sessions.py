@@ -459,7 +459,8 @@ def session_canvas_readiness(
     other view on this page.
     """
     session = _owned_session(db, code, teacher)
-    return service.canvas_match_summary(db, session, course_id or settings.canvas_course_id)
+    course = course_id or service.current_course_id(db, settings.canvas_course_id)
+    return service.canvas_match_summary(db, session, course)
 
 
 @router.get("/{code}/canvas-participation.csv", include_in_schema=False)
@@ -483,7 +484,7 @@ def session_canvas_participation_csv(
     restricted to the session's own owner.
     """
     session = _owned_session(db, code, teacher)
-    course = course_id or settings.canvas_course_id
+    course = course_id or service.current_course_id(db, settings.canvas_course_id)
     report = service.session_canvas_participation(db, session, course, threshold)
     column = assignment or f"{report['title']} {report['date']}"
 

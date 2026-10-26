@@ -501,8 +501,8 @@ of it that assumes the identity is proven.
   would publish the roster to anyone who opens the page. The field is instead
   a type-ahead over `GET /api/auth/roster-suggest`, which is deliberately
   grudging: nothing until three characters, prefix rather than substring, at
-  most eight matches, rate-limited per client, and scoped to
-  `CANVAS_COURSE_ID`. This still leaks the roster to anyone patient enough to
+  most eight matches, rate-limited per client, and scoped to the current
+  course (below). This still leaks the roster to anyone patient enough to
   try many prefixes — a smaller hole than handing the class over on page load,
   but a hole, and one more reason to retire this mode. A refusal never says
   who *is* enrolled.
@@ -551,6 +551,14 @@ never reaches a client, and is never logged.
   identifier KTH's own IdP exposes — so a student who authenticates through
   Canvas today and through KTH later stays one person instead of becoming two.
   `login_id` (`shiraza@kth.se`) supplies the display username.
+- **The course in use is the one synced most recently**, unless
+  `CANVAS_COURSE_ID` pins one (`service.current_course_id`). It decides which
+  roster the Canvas files match students against. The setting used to default
+  to one fixed course, so a new term silently matched its students against
+  last year's roster and left their ids blank unless somebody edited the
+  configuration file; syncing the new course is something the teacher does
+  anyway, so it now decides. The dashboard's roster panel says which course is
+  in use and why. `tests/test_current_course.py`.
 - **Email is deliberately not stored.** Canvas returns it; the app never sends
   mail, so keeping it would be personal data held for no reason.
 - The roster is personal data: teacher-only endpoints, and the dashboard shows

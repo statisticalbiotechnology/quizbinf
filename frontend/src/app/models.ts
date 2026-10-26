@@ -188,6 +188,10 @@ export interface RosterStatus {
   canvas_configured: boolean;
   canvas_base_url: string;
   courses: SyncedCourse[];
+  /** The course the Canvas files use; null until anything is synced. */
+  current_course_id?: number | null;
+  /** True when CANVAS_COURSE_ID fixes it, false when it is the last one synced. */
+  course_pinned?: boolean;
 }
 
 export interface SyncSummary {
@@ -208,7 +212,8 @@ export interface QuestionEditInput {
 
 /** Whether this lecture's Canvas file can be imported — see api.service. */
 export interface CanvasReadiness {
-  course_id: number;
+  /** Null when no course is configured and nothing has been synced yet. */
+  course_id: number | null;
   students: number;
   matched: number;
   unmatched: string[];

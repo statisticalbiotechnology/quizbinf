@@ -173,6 +173,13 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                been synced keeps working after the token is removed, and
                removing it is the recommended thing to do. Hiding this made a
                correctly configured deployment look broken. -->
+          @if (status.current_course_id) {
+            <p class="note">
+              The Canvas files use course <strong>{{ status.current_course_id }}</strong>,
+              {{ status.course_pinned ? 'as set by CANVAS_COURSE_ID' : 'the one synced most recently' }}.
+              For a new course, sync it here and the files follow.
+            </p>
+          }
           @if (status.courses.length) {
             <table class="synced">
               <tr><th>Course</th><th>Students</th><th>Last synced</th></tr>

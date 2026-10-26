@@ -965,6 +965,26 @@ def course_roster(db: Session, course_id: int) -> list[RosterEntry]:
     )
 
 
+def current_course_id(db: Session, configured: int | None) -> int | None:
+    """The Canvas course the attendance files and the roster lookups use.
+
+    `CANVAS_COURSE_ID` when it is set, otherwise the course whose roster was
+    synced most recently. The setting used to default to one fixed course,
+    which meant a new term silently kept matching students against last year's
+    roster unless somebody remembered to edit the configuration file; syncing
+    the new course is something the teacher does anyway, so it now decides.
+    None until anything has been synced.
+    """
+    if configured:
+        return configured
+    return db.scalar(
+        select(RosterEntry.course_id)
+        .group_by(RosterEntry.course_id)
+        .order_by(func.max(RosterEntry.synced_at).desc(), RosterEntry.course_id.desc())
+        .limit(1)
+    )
+
+
 def roster_courses(db: Session, teacher: User) -> list[dict]:
     """Courses this teacher has synced, with how many students each holds."""
     rows = db.execute(

@@ -270,7 +270,8 @@ def roster_suggest(
         return {"matches": []}
     suggest_throttle.record(client)
 
-    usernames = service.roster_suggestions(db, settings.canvas_course_id, q)
+    course = service.current_course_id(db, settings.canvas_course_id)
+    usernames = service.roster_suggestions(db, course, q) if course else []
     return {"matches": [f"{u}@kth.se" for u in usernames]}
 
 
