@@ -18,6 +18,10 @@ const POLL_MS = 3000;
  * shrinks into a corner — small, but still there, because someone always fails
  * to log in during the scramble and needs a way in mid-lecture.
  *
+ * Except during a word cloud. That is the opening exercise, asked while most
+ * of the room is still getting in, so the code stays full size beside it; a
+ * 120-pixel code in a corner is not one anybody scans from the back.
+ *
  * It shows the choices, never which of them is correct.
  */
 @Component({
@@ -31,7 +35,12 @@ const POLL_MS = 3000;
           <app-question-panel />
         </div>
         <aside class="aside">
-          <app-join-qr [small]="true" />
+          <app-join-qr [small]="!cloudNow()" />
+          @if (cloudNow()) {
+            <p class="joined-small">
+              or enter code <strong class="code-small">{{ feed.code() }}</strong>
+            </p>
+          }
           <p class="joined-small">{{ joined() }} joined</p>
         </aside>
       </div>
@@ -76,6 +85,7 @@ const POLL_MS = 3000;
       .running .question { flex: 1; margin: 0; padding: 0; }
       .aside { flex-shrink: 0; }
       .joined-small { font-size: 0.85rem; color: #777; text-align: center; margin: 0.3rem 0 0; }
+      .code-small { letter-spacing: 0.08em; color: #222; }
 
       @media (max-width: 40rem) {
         .running { flex-direction: column-reverse; }
@@ -97,6 +107,11 @@ export class TeacherSessionJoinComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     if (this.timer) clearInterval(this.timer);
+  }
+
+  /** Whether the question on screen is a word cloud: keep the code large. */
+  cloudNow(): boolean {
+    return this.feed.currentQuestion()?.kind === 'text';
   }
 
   host(): string {

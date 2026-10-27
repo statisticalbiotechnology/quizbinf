@@ -168,6 +168,44 @@ test('a way in stays on screen once the questions have started', async ({ browse
   await ctx.close();
 });
 
+test('the code stays full size while a word cloud is asked', async ({ browser }) => {
+  // The cloud opens a course, while most of the room is still getting in.
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+  const page = await ctx.newPage();
+  await loginAs(page, 'teacher');
+  await page.waitForURL('**/teacher');
+
+  const quiz = await newQuiz(page, 'Cloud QR quiz');
+  await quiz.locator('details').first().locator('summary').click();
+  await quiz.locator('textarea[name="qtext"]').fill('What do you expect to learn?');
+  await quiz.getByLabel('Word cloud').check();
+  await quiz.getByRole('button', { name: 'Save question' }).click();
+  await expect(quiz.getByText('What do you expect to learn?').first()).toBeVisible();
+  await addQuestion(quiz, 'Which aligns locally', ['a', 'b']);
+  await quiz.getByRole('button', { name: 'Run session ▶' }).click();
+  await page.waitForURL('**/teacher/session/*/join');
+
+  await page.getByRole('link', { name: 'Control', exact: true }).click();
+  await page.getByRole('button', { name: 'Open for words' }).click();
+  await page.getByRole('link', { name: 'Join', exact: true }).click();
+
+  await expect(page.locator('app-question-panel')).toContainText('What do you expect to learn?');
+  const qr = page.locator('img.qr');
+  await expect(qr).toBeVisible();
+  expect((await qr.boundingBox()).width).toBeGreaterThan(300);
+  await expect(page.locator('.aside')).toContainText('or enter code');
+
+  // Once the cloud is halted the class moves on, and the code steps aside.
+  await page.getByRole('link', { name: 'Control', exact: true }).click();
+  await page.getByRole('button', { name: 'Halt submission' }).click();
+  await page.getByRole('button', { name: 'Open 1st bout (pre)' }).click();
+  await page.getByRole('link', { name: 'Join', exact: true }).click();
+  await expect(page.locator('app-question-panel')).toContainText('Which aligns locally');
+  expect((await page.locator('img.qr').boundingBox()).width).toBeLessThan(200);
+
+  await ctx.close();
+});
+
 test('the questions can be downloaded as study material', async ({ browser }) => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();

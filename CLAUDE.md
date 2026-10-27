@@ -62,7 +62,10 @@ Key product requirements:
   QR code owns the screen; once the first bout opens (`SessionFeed.started()`)
   the question takes that space and the code shrinks to a corner. It shrinks
   rather than disappears because somebody always fails to log in during the
-  scramble and needs a way in mid-lecture. It is deliberately *not* repeated on
+  scramble and needs a way in mid-lecture. **A word cloud keeps it full size**
+  beside the question: the cloud opens a course, while most of the room is
+  still getting in, and a 120-pixel code in a corner is not one anybody scans
+  from the back. It is deliberately *not* repeated on
   the Report view: that screen is projected after the fact, the Join view is a
   click away, and a second code there buys nothing.
 - **The question belongs on the projected screen throughout.** The Join view
