@@ -2,6 +2,7 @@ import { Component, effect, signal } from '@angular/core';
 
 import { ApiService } from '../api.service';
 import { Draw, Question, WordCloud } from '../models';
+import { JoinQrComponent } from './join-qr.component';
 import { NameDrawComponent } from './name-draw.component';
 import { WordCloudComponent } from './word-cloud.component';
 import { SessionFeed } from './session-feed.service';
@@ -22,9 +23,10 @@ import { SessionFeed } from './session-feed.service';
 @Component({
   selector: 'app-teacher-session-report',
   standalone: true,
-  imports: [NameDrawComponent, WordCloudComponent],
+  imports: [JoinQrComponent, NameDrawComponent, WordCloudComponent],
   template: `
-    <div class="wrap">
+    <div class="wrap with-way-in">
+      <div class="main">
       <div class="top">
         <!-- Study material: students ask for the questions afterwards, and
              where they look is Canvas. Figures are rewritten to absolute URLs
@@ -126,11 +128,24 @@ import { SessionFeed } from './session-feed.service';
           </section>
         }
       }
+      </div>
+      <!-- A way in on every projected view of a running session: whichever
+           screen is up, somebody has just arrived or failed to log in. -->
+      <aside class="way-in">
+        <app-join-qr [small]="true" />
+      </aside>
     </div>
   `,
   styles: [
     `
       .wrap { max-width: 46rem; margin: 1.5rem auto; padding: 1rem; }
+      .with-way-in { max-width: 56rem; display: grid; gap: 1.5rem;
+                     grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+      .way-in { position: sticky; top: 1rem; }
+      @media (max-width: 40rem) {
+        .with-way-in { grid-template-columns: minmax(0, 1fr); }
+        .way-in { position: static; order: -1; }
+      }
       .top { display: flex; justify-content: space-between; align-items: flex-start;
              gap: 1rem; }
       .handout { font-size: 0.9rem; color: #555; margin: 0; }

@@ -2,6 +2,7 @@ import { Component, OnDestroy, OnInit, signal } from '@angular/core';
 
 import { ApiService } from '../api.service';
 import { Phase, Question } from '../models';
+import { JoinQrComponent } from './join-qr.component';
 import { SessionFeed } from './session-feed.service';
 
 /** How often to refresh the answer counter while a round is open. */
@@ -16,8 +17,10 @@ const POLL_MS = 2000;
 @Component({
   selector: 'app-teacher-session-control',
   standalone: true,
+  imports: [JoinQrComponent],
   template: `
-    <div class="wrap">
+    <div class="wrap with-way-in">
+      <div class="main">
       <p class="status" [class.open]="feed.anyOpen()">
         @if (feed.openRound(); as r) {
           <strong>OPEN</strong> — {{ r.phase === 'pre' ? 'first' : 'second' }} answers ·
@@ -94,11 +97,24 @@ const POLL_MS = 2000;
       @if (actionError()) {
         <p class="error">{{ actionError() }}</p>
       }
+      </div>
+      <!-- A way in on every projected view of a running session: whichever
+           screen is up, somebody has just arrived or failed to log in. -->
+      <aside class="way-in">
+        <app-join-qr [small]="true" />
+      </aside>
     </div>
   `,
   styles: [
     `
       .wrap { max-width: 46rem; margin: 1.5rem auto; padding: 1rem; }
+      .with-way-in { max-width: 56rem; display: grid; gap: 1.5rem;
+                     grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+      .way-in { position: sticky; top: 1rem; }
+      @media (max-width: 40rem) {
+        .with-way-in { grid-template-columns: minmax(0, 1fr); }
+        .way-in { position: static; order: -1; }
+      }
       .status { font-size: 1.2rem; padding: 0.7rem 0.9rem; border-radius: 6px;
                 background: #f3f3f3; margin: 0 0 1rem; }
       .status.open { background: #eafaf1; }

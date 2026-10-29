@@ -65,9 +65,10 @@ Key product requirements:
   scramble and needs a way in mid-lecture. **A word cloud keeps it full size**
   beside the question: the cloud opens a course, while most of the room is
   still getting in, and a 120-pixel code in a corner is not one anybody scans
-  from the back. It is deliberately *not* repeated on
-  the Report view: that screen is projected after the fact, the Join view is a
-  click away, and a second code there buys nothing.
+  from the back. **Control and Report carry the small code too**, at every
+  stage: the teacher projects whichever screen is up, and a latecomer should
+  not depend on which one that is. `e2e/lecture-tools.spec.mjs` checks all
+  three views before, during and between the bouts.
 - **The question belongs on the projected screen throughout.** The Join view
   carries `<app-question-panel>`, which shows the question the class is on —
   while students are still scanning, while a bout is open, and while they argue
