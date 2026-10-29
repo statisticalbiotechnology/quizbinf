@@ -2,6 +2,7 @@ import { Component, effect, signal } from '@angular/core';
 
 import { ApiService } from '../api.service';
 import { Draw, Question, WordCloud } from '../models';
+import { MarkdownHtmlDirective } from '../md-html.directive';
 import { JoinQrComponent } from './join-qr.component';
 import { NameDrawComponent } from './name-draw.component';
 import { WordCloudComponent } from './word-cloud.component';
@@ -23,7 +24,7 @@ import { SessionFeed } from './session-feed.service';
 @Component({
   selector: 'app-teacher-session-report',
   standalone: true,
-  imports: [JoinQrComponent, NameDrawComponent, WordCloudComponent],
+  imports: [JoinQrComponent, MarkdownHtmlDirective, NameDrawComponent, WordCloudComponent],
   template: `
     <div class="wrap with-way-in">
       <div class="main">
@@ -53,7 +54,7 @@ import { SessionFeed } from './session-feed.service';
         @if (feed.comparisons()[q.id]; as c) {
           <section class="q">
             <div class="qtext"><span class="num">{{ q.position + 1 }}.</span>
-            <span [innerHTML]="q.text_html"></span></div>
+            <span [mdHtml]="q.text_html"></span></div>
 
             @if (q.kind === 'text') {
               @if (clouds()[q.id]; as cloud) {
@@ -82,7 +83,7 @@ import { SessionFeed } from './session-feed.service';
                 @for (ch of q.choices; track ch.id) {
                   <div class="row" [class.correct]="revealCorrect(q) && ch.is_correct">
                     <span class="label">
-                      {{ ch.text }}
+                      <span class="choice-md" [mdHtml]="ch.text_html"></span>
                       @if (revealCorrect(q) && ch.is_correct) { <span class="tick">✓</span> }
                     </span>
                     <span class="bars">

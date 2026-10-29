@@ -58,7 +58,9 @@ a {
  */
 .qtext,
 .q-text,
-.preview {
+.preview,
+.choice-md,
+.choices li {
   img {
     max-width: 100%;
     height: auto;
@@ -81,4 +83,20 @@ app-teacher-session-control {
   .qtext img {
     max-width: 22rem;
   }
+}
+
+/* A choice is rendered Markdown as well: one line usually, sometimes a
+ * formula or a figure. Keep a display formula from widening a phone's button,
+ * and let a multi-paragraph choice sit tight. */
+.choice-md,
+.choices li {
+  p { margin: 0.2rem 0; }
+  .katex-display { margin: 0.3rem 0; overflow-x: auto; overflow-y: hidden; }
+}
+
+/* A formula in question text, likewise scrolled rather than overflowing. */
+.qtext .katex-display,
+.preview .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
 }

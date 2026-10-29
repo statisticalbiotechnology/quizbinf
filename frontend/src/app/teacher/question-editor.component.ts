@@ -2,6 +2,7 @@ import { Component, EventEmitter, Input, OnDestroy, Output, signal } from '@angu
 import { FormsModule } from '@angular/forms';
 
 import { ApiService } from '../api.service';
+import { MarkdownHtmlDirective } from '../md-html.directive';
 import { QuestionKind } from '../models';
 
 export interface ChoiceDraft {
@@ -33,7 +34,7 @@ export const MAX_WORDS = 5;
 @Component({
   selector: 'app-question-editor',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, MarkdownHtmlDirective],
   template: `
     <div class="add-q">
       <!-- Stable name: only the radio group below needs to differ per editor,
@@ -56,9 +57,10 @@ export const MAX_WORDS = 5;
           {{ uploading() ? 'Uploading…' : '🖼 Add image' }}
         </label>
         <span class="md-hint">
-          Markdown supported. Uploads are inserted as an image link — add
-          <code>&#123;width=60%&#125;</code> after one to size it, as a
-          percentage of the column it appears in.
+          Markdown supported, in the choices too. Uploads are inserted as an
+          image link — add <code>&#123;width=60%&#125;</code> after one to size
+          it, as a percentage of the column it appears in. Formulas:
+          <code>$x^2$</code> inline, <code>$$…$$</code> on a line of their own.
         </span>
       </div>
       @if (uploadError()) {
@@ -68,7 +70,7 @@ export const MAX_WORDS = 5;
       @if (draft.text.trim()) {
         <div class="preview">
           <span class="preview-label">Preview</span>
-          <div [innerHTML]="preview()"></div>
+          <div [mdHtml]="preview()"></div>
         </div>
       }
 
@@ -126,7 +128,12 @@ export const MAX_WORDS = 5;
             />
             <span>correct</span>
           </label>
-          <input [(ngModel)]="c.text" [name]="'c' + formId + $index" placeholder="Choice text" />
+          <input
+            [(ngModel)]="c.text"
+            [name]="'c' + formId + $index"
+            placeholder="Choice text"
+            (ngModelChange)="refreshPreview()"
+          />
           @if (draft.choices.length > 2) {
             <button type="button" class="drop" (click)="removeChoice($index)" title="Remove choice">
               ✕
@@ -222,7 +229,16 @@ export class QuestionEditorComponent implements OnDestroy {
         this.preview.set('');
         return;
       }
-      this.api.renderMarkdown(text).subscribe({
+      // The choices are Markdown too, so they belong in the preview: a
+      // formula with a typo should be caught here, not on the projector.
+      const choices =
+        this.draft.kind === 'choice'
+          ? this.draft.choices
+              .filter((c) => c.text.trim())
+              .map((c, i) => `${i + 1}. ${c.text.trim()}`)
+              .join('\n')
+          : '';
+      this.api.renderMarkdown(choices ? `${text}\n\n${choices}` : text).subscribe({
         next: ({ html }) => this.preview.set(html),
         error: () => this.preview.set(''),
       });

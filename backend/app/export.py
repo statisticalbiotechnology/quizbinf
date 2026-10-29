@@ -15,7 +15,7 @@ so they load for a student reading the page in Canvas.
 
 import re
 
-from .markdown import render
+from .markdown import render, render_inline
 from .models import Quiz
 
 # Only the app's own upload paths are made absolute. A link a teacher wrote to
@@ -81,7 +81,8 @@ def as_html(quiz: Quiz, base_url: str, answers: bool = True) -> str:
             correct = answers and choice.is_correct
             tick = ' <span class="answer">&#10003;</span>' if correct else ""
             css = ' class="correct"' if correct else ""
-            parts.append(f"<li{css}>{_escape(choice.text)}{tick}</li>")
+            choice_html = absolute_html(render_inline(choice.text), base_url)
+            parts.append(f"<li{css}>{choice_html}{tick}</li>")
         parts.append("</ul>")
     parts.append("</body>")
     parts.append("</html>")

@@ -83,3 +83,53 @@ test('markdown and an uploaded figure reach the student', async ({ browser }) =>
 
   await teacherCtx.close();
 });
+
+test('formulas and Markdown in the choices reach the student drawn, not as source', async ({
+  browser,
+}) => {
+  // Through the API: what is pinned here is the drawing, not the authoring form.
+  const teacherCtx = await browser.newContext();
+  const t = teacherCtx.request;
+  await t.post('/api/auth/mock-login', { data: { username: 'teacher' } });
+  const quiz = await (await t.post('/api/quizzes', { data: { title: 'Formula quiz' } })).json();
+  const question = await (
+    await t.post(`/api/quizzes/${quiz.id}/questions`, {
+      data: {
+        text: 'What does $S > 0$ say?',
+        choices: [
+          { text: '**more** often than chance: $p_{ij} > q_i q_j$', is_correct: true },
+          { text: '$$\n\\sum_k \\log_2 \\frac{p_k}{q_k}\n$$' },
+        ],
+      },
+    })
+  ).json();
+  const code = (await (await t.post(`/api/sessions?quiz_id=${quiz.id}`)).json()).code;
+  await t.post(`/api/sessions/${code}/rounds`, {
+    data: { question_id: question.id, phase: 'pre' },
+  });
+
+  const studentCtx = await browser.newContext();
+  const student = await studentCtx.newPage();
+  await student.goto('/login');
+  await student.getByPlaceholder('e.g. lukask').fill('formulastudent');
+  await student.getByRole('button', { name: 'Log in' }).click();
+  await student.goto(`/s/${code}`);
+
+  const choices = student.locator('button.choice');
+  await expect(choices).toHaveCount(2);
+  // One formula in the question, one in each choice, each drawn by KaTeX.
+  await expect(student.locator('.qtext .katex')).toHaveCount(1);
+  await expect(choices.nth(0).locator('.katex')).toHaveCount(1);
+  await expect(choices.nth(1).locator('.katex-display')).toHaveCount(1);
+  await expect(choices.nth(0).locator('strong')).toHaveText('more');
+  // No source left over for anyone to read off the phone.
+  await expect(student.locator('.wrap')).not.toContainText('$');
+  await expect(student.locator('.wrap')).not.toContainText('**');
+
+  // And it is still a button that answers.
+  await choices.nth(0).click();
+  await expect(student.locator('.saved')).toBeVisible();
+
+  await teacherCtx.close();
+  await studentCtx.close();
+});

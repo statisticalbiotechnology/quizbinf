@@ -375,6 +375,22 @@ quizbinf/
   student in the room. Raw HTML in the source is escaped, not passed through.
   The authoring preview renders through the same endpoint
   (`POST /api/markdown/preview`) so it cannot disagree with what students see.
+  **Choices are Markdown too** (`text_html` on every choice, through
+  `render_inline`, which drops the `<p>` from a one-paragraph choice so it sits
+  on the line of a button), so a choice can hold a formula, emphasis or a
+  figure, and the preview shows the choices under the question.
+- **Formulas are LaTeX: `$...$` inline, `$$...$$` on a line of their own.**
+  The server only *marks* them (`mdit_py_plugins.dollarmath` →
+  `<span class="math inline">` / `<div class="math block">` with the TeX as
+  text); nh3 allows `span`/`div` with those classes and nothing else. The
+  browser draws them with KaTeX in `md-html.directive.ts`, which replaces
+  `[innerHTML]` for every question and choice: it runs Angular's sanitiser
+  over the server's HTML first, so the second layer stays, then renders the
+  marked elements. KaTeX is a lazy chunk, loaded only once a formula is on the
+  page, and runs with its default `trust: false`. A dollar followed by a space
+  or closed before a digit is not a formula, so "costs $5 and $10" stays
+  prose. The handouts keep the TeX as written: Markdown carries `$...$`, and
+  the HTML carries the marked spans, unrendered.
 - **Figures are uploaded to the app**, not linked from elsewhere: a question
   must not break because an external host is down mid-lecture. Files land on
   the mounted volume (`<data>/images/`), are teacher-only to upload, capped at

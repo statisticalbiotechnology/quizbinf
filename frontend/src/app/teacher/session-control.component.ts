@@ -2,6 +2,7 @@ import { Component, OnDestroy, OnInit, signal } from '@angular/core';
 
 import { ApiService } from '../api.service';
 import { Phase, Question } from '../models';
+import { MarkdownHtmlDirective } from '../md-html.directive';
 import { JoinQrComponent } from './join-qr.component';
 import { SessionFeed } from './session-feed.service';
 
@@ -17,7 +18,7 @@ const POLL_MS = 2000;
 @Component({
   selector: 'app-teacher-session-control',
   standalone: true,
-  imports: [JoinQrComponent],
+  imports: [JoinQrComponent, MarkdownHtmlDirective],
   template: `
     <div class="wrap with-way-in">
       <div class="main">
@@ -45,14 +46,14 @@ const POLL_MS = 2000;
       @for (q of shownQuestions(); track q.id) {
         <section class="q" [class.live]="feed.openRoundFor(q)">
           <div class="qtext"><span class="num">{{ q.position + 1 }}.</span>
-            <span [innerHTML]="q.text_html"></span></div>
+            <span [mdHtml]="q.text_html"></span></div>
 
           <!-- The alternatives as the students see them, so the teacher can
                read them out without switching views. Nothing is marked until
                asked for: this screen is often visible from the room. -->
           <ol class="choices">
             @for (c of q.choices; track c.id) {
-              <li [class.correct]="revealed()[q.id] && c.is_correct">{{ c.text }}</li>
+              <li [class.correct]="revealed()[q.id] && c.is_correct" [mdHtml]="c.text_html"></li>
             }
           </ol>
           @if (q.kind !== 'text') {
