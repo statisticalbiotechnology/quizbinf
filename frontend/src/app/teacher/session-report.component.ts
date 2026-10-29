@@ -2,6 +2,8 @@ import { Component, effect, signal } from '@angular/core';
 
 import { ApiService } from '../api.service';
 import { Draw, Question, WordCloud } from '../models';
+import { MarkdownHtmlDirective } from '../md-html.directive';
+import { JoinQrComponent } from './join-qr.component';
 import { NameDrawComponent } from './name-draw.component';
 import { WordCloudComponent } from './word-cloud.component';
 import { SessionFeed } from './session-feed.service';
@@ -22,9 +24,10 @@ import { SessionFeed } from './session-feed.service';
 @Component({
   selector: 'app-teacher-session-report',
   standalone: true,
-  imports: [NameDrawComponent, WordCloudComponent],
+  imports: [JoinQrComponent, MarkdownHtmlDirective, NameDrawComponent, WordCloudComponent],
   template: `
-    <div class="wrap">
+    <div class="wrap with-way-in">
+      <div class="main">
       <div class="top">
         <!-- Study material: students ask for the questions afterwards, and
              where they look is Canvas. Figures are rewritten to absolute URLs
@@ -51,7 +54,7 @@ import { SessionFeed } from './session-feed.service';
         @if (feed.comparisons()[q.id]; as c) {
           <section class="q">
             <div class="qtext"><span class="num">{{ q.position + 1 }}.</span>
-            <span [innerHTML]="q.text_html"></span></div>
+            <span [mdHtml]="q.text_html"></span></div>
 
             @if (q.kind === 'text') {
               @if (clouds()[q.id]; as cloud) {
@@ -80,7 +83,7 @@ import { SessionFeed } from './session-feed.service';
                 @for (ch of q.choices; track ch.id) {
                   <div class="row" [class.correct]="revealCorrect(q) && ch.is_correct">
                     <span class="label">
-                      {{ ch.text }}
+                      <span class="choice-md" [mdHtml]="ch.text_html"></span>
                       @if (revealCorrect(q) && ch.is_correct) { <span class="tick">✓</span> }
                     </span>
                     <span class="bars">
@@ -126,11 +129,24 @@ import { SessionFeed } from './session-feed.service';
           </section>
         }
       }
+      </div>
+      <!-- A way in on every projected view of a running session: whichever
+           screen is up, somebody has just arrived or failed to log in. -->
+      <aside class="way-in">
+        <app-join-qr [small]="true" />
+      </aside>
     </div>
   `,
   styles: [
     `
       .wrap { max-width: 46rem; margin: 1.5rem auto; padding: 1rem; }
+      .with-way-in { max-width: 56rem; display: grid; gap: 1.5rem;
+                     grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+      .way-in { position: sticky; top: 1rem; }
+      @media (max-width: 40rem) {
+        .with-way-in { grid-template-columns: minmax(0, 1fr); }
+        .way-in { position: static; order: -1; }
+      }
       .top { display: flex; justify-content: space-between; align-items: flex-start;
              gap: 1rem; }
       .handout { font-size: 0.9rem; color: #555; margin: 0; }

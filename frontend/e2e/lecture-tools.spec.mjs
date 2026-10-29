@@ -168,6 +168,50 @@ test('a way in stays on screen once the questions have started', async ({ browse
   await ctx.close();
 });
 
+test('every projected view carries a way in, at every stage', async ({ browser }) => {
+  // The teacher projects whichever screen is up; a latecomer should not
+  // depend on which one that is.
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+  const page = await ctx.newPage();
+  await loginAs(page, 'teacher');
+  await page.waitForURL('**/teacher');
+  const quiz = await newQuiz(page, 'Way-in quiz');
+  await addQuestion(quiz, 'Which aligns locally', ['a', 'b']);
+  await quiz.getByRole('button', { name: 'Run session ▶' }).click();
+  await page.waitForURL('**/teacher/session/*/join');
+  const code = page.url().split('/').at(-2);
+
+  const goto = (name) => page.getByRole('link', { name, exact: true }).click();
+  const expectWayIn = async (stage) => {
+    for (const view of ['Join', 'Control', 'Report']) {
+      await goto(view);
+      const qr = page.locator('img.qr');
+      await expect(qr, `${view}, ${stage}: QR code`).toBeVisible();
+      // Visible is not loaded: wait for the image itself, not a fixed time.
+      await expect
+        .poll(() => qr.evaluate((el) => el.naturalWidth), { message: `${view}, ${stage}: QR loads` })
+        .toBeGreaterThan(0);
+      await expect(page.locator('body'), `${view}, ${stage}: session code`).toContainText(code);
+    }
+  };
+
+  await expectWayIn('before the first bout');
+  await goto('Control');
+  await page.getByRole('button', { name: 'Open 1st bout (pre)' }).click();
+  await expectWayIn('during the first bout');
+  await goto('Control');
+  await page.getByRole('button', { name: 'Halt submission' }).click();
+  await expectWayIn('between the bouts');
+  await goto('Control');
+  await page.getByRole('button', { name: 'Open 2nd bout (post)' }).click();
+  await expectWayIn('during the second bout');
+  await goto('Control');
+  await page.getByRole('button', { name: 'Halt submission' }).click();
+  await expectWayIn('after the last bout');
+
+  await ctx.close();
+});
+
 test('the code stays full size while a word cloud is asked', async ({ browser }) => {
   // The cloud opens a course, while most of the room is still getting in.
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 } });

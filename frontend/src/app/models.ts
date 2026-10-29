@@ -11,6 +11,8 @@ export interface Choice {
   id: number;
   position: number;
   text: string;
+  /** `text` rendered from Markdown and sanitised server-side; bind this. */
+  text_html: string;
   is_correct?: boolean; // present only in teacher views
 }
 

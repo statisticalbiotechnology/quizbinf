@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 
 import { ApiService } from '../api.service';
+import { MarkdownHtmlDirective } from '../md-html.directive';
 import { AuthService } from '../auth.service';
 import { SessionState } from '../models';
 
@@ -20,7 +21,7 @@ const RETRYABLE_STATUSES = [0, 502, 503, 504];
 @Component({
   selector: 'app-student-session',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, MarkdownHtmlDirective],
   template: `
     <div class="wrap">
       @if (state(); as s) {
@@ -30,7 +31,7 @@ const RETRYABLE_STATUSES = [0, 502, 503, 504];
           <p class="phase">
             {{ s.open_round.phase === 'pre' ? 'First answer' : 'Answer again after discussion' }}
           </p>
-          <div class="qtext" [innerHTML]="s.question.text_html"></div>
+          <div class="qtext" [mdHtml]="s.question.text_html"></div>
           @if (s.question.image_url) {
             <img [src]="s.question.image_url" alt="" />
           }
@@ -59,7 +60,7 @@ const RETRYABLE_STATUSES = [0, 502, 503, 504];
                   [class.selected]="selected() === c.id"
                   (click)="answer(c.id)"
                 >
-                  {{ c.text }}
+                  <span class="choice-md" [mdHtml]="c.text_html"></span>
                 </button>
               }
             </div>

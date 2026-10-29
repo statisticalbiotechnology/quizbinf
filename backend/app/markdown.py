@@ -11,6 +11,7 @@ import re
 import nh3
 from markdown_it import MarkdownIt
 from mdit_py_plugins.attrs import attrs_plugin
+from mdit_py_plugins.dollarmath import dollarmath_plugin
 
 # Sizing a figure: `![](/api/images/x.png){width=60%}` sets it to 60% of the
 # column it is in, which is what a teacher wants — the column is a phone on a
@@ -39,10 +40,17 @@ def _quote_percentages(text: str) -> str:
 # `html=False` means anything HTML-looking in the source is escaped rather
 # than passed through, so the sanitiser below is a second line of defence and
 # not the only one.
+#
+# Formulas are written as in LaTeX: `$...$` inline, `$$...$$` on a line of
+# their own. The server only marks them, as `<span class="math inline">` and
+# `<div class="math block">` holding the TeX source as text; the browser draws
+# them with KaTeX. A dollar followed by a space or closed before a digit is not
+# a formula, so "costs $5 and $10" stays prose.
 _md = (
     MarkdownIt("commonmark", {"html": False, "linkify": True})
     .enable("table")
     .use(attrs_plugin, allowed=_SIZE_ATTRIBUTES)
+    .use(dollarmath_plugin, allow_space=False, allow_digits=False, double_inline=True)
 )
 
 # Formatting a question needs: emphasis, code (sequences, gene names), lists,
@@ -56,6 +64,15 @@ _ALLOWED_TAGS = {
     "h1", "h2", "h3", "h4",
     "a", "img",
     "table", "thead", "tbody", "tr", "th", "td",
+    # Carriers for formulas only: no attribute but the two classes below.
+    "span", "div",
+}
+
+# The only classes that survive, and only on the elements the math plugin
+# writes. Anything else a class could mean in the page's own CSS stays out.
+_ALLOWED_CLASSES = {
+    "span": {"math", "inline"},
+    "div": {"math", "block"},
 }
 
 _ALLOWED_ATTRIBUTES = {
@@ -75,8 +92,21 @@ def render(text: str) -> str:
         html,
         tags=_ALLOWED_TAGS,
         attributes=_ALLOWED_ATTRIBUTES,
+        allowed_classes=_ALLOWED_CLASSES,
         # Images and links may point at an uploaded file (a relative
         # /api/images/... path) or at an external https resource.
         url_schemes={"http", "https"},
         link_rel="noopener noreferrer",
     ).strip()
+
+
+_ONE_PARAGRAPH = re.compile(r"\A<p>((?:(?!</?p>).)*)</p>\Z", re.DOTALL)
+
+
+def render_inline(text: str) -> str:
+    """The same, for a short piece such as a choice: one paragraph comes back
+    without its `<p>`, so it sits on the line of a button or a list item. A
+    choice with a display formula or several paragraphs keeps its blocks."""
+    html = render(text)
+    match = _ONE_PARAGRAPH.match(html)
+    return match.group(1) if match else html

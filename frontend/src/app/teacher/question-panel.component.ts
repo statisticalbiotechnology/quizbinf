@@ -1,5 +1,6 @@
 import { Component } from '@angular/core';
 
+import { MarkdownHtmlDirective } from '../md-html.directive';
 import { SessionFeed } from './session-feed.service';
 
 /**
@@ -13,13 +14,14 @@ import { SessionFeed } from './session-feed.service';
 @Component({
   selector: 'app-question-panel',
   standalone: true,
+  imports: [MarkdownHtmlDirective],
   template: `
     @if (feed.currentQuestion(); as q) {
       <section class="panel">
         <p class="stage" [class.open]="stageIsOpen()">{{ label() }}</p>
         <div class="qtext">
           <span class="num">{{ q.position + 1 }}.</span>
-          <span [innerHTML]="q.text_html"></span>
+          <span [mdHtml]="q.text_html"></span>
         </div>
         @if (q.kind === 'text') {
           <p class="write">
@@ -32,7 +34,7 @@ import { SessionFeed } from './session-feed.service';
         }
         <ol class="choices">
           @for (c of q.choices; track c.id) {
-            <li>{{ c.text }}</li>
+            <li [mdHtml]="c.text_html"></li>
           }
         </ol>
       </section>

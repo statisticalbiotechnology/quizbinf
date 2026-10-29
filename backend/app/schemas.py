@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from .markdown import render as render_markdown
+from .markdown import render_inline
 from .models import MAX_TEXT_ANSWER, MAX_WORDS, Kind, Phase, Role
 
 
@@ -128,6 +129,13 @@ class ChoiceOut(BaseModel):
     id: int
     position: int
     text: str
+
+    @computed_field
+    @property
+    def text_html(self) -> str:
+        """The choice rendered from Markdown and sanitised, as question text is:
+        a formula or a figure is as likely in an answer as in the question."""
+        return render_inline(self.text)
 
 
 class ChoiceTeacherOut(ChoiceOut):

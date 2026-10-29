@@ -5,12 +5,13 @@ import { Router } from '@angular/router';
 
 import { ApiService } from '../api.service';
 import { CanvasCourse, Question, Quiz, RosterStatus, SyncSummary } from '../models';
+import { MarkdownHtmlDirective } from '../md-html.directive';
 import { QuestionDraft, QuestionEditorComponent } from './question-editor.component';
 
 @Component({
   selector: 'app-teacher-dashboard',
   standalone: true,
-  imports: [DatePipe, FormsModule, QuestionEditorComponent],
+  imports: [DatePipe, FormsModule, MarkdownHtmlDirective, QuestionEditorComponent],
   template: `
     <div class="wrap">
       @if (ephemeralStorage()) {
@@ -246,7 +247,7 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                     <!-- The qtext class is what the global rules for rendered
                          question Markdown key on; without it a figure here
                          draws at its natural pixel size. -->
-                    <span class="qtext" [innerHTML]="q.text_html"></span>
+                    <span class="qtext" [mdHtml]="q.text_html"></span>
                     <span class="q-actions">
                       <button
                         type="button"
@@ -280,9 +281,10 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
                   }
                   <ul>
                     @for (c of q.choices; track c.id) {
-                      <li [class.correct]="revealed()[q.id] && c.is_correct">
-                        {{ c.text }}
-                      </li>
+                      <li
+                        [class.correct]="revealed()[q.id] && c.is_correct"
+                        [mdHtml]="c.text_html"
+                      ></li>
                     }
                   </ul>
                   @if (q.kind !== 'text') {

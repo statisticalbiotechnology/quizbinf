@@ -19,6 +19,7 @@ function choices(...texts: string[]): Choice[] {
     id: 100 + i,
     position: i,
     text,
+    text_html: text,
     is_correct: i === 0,
   }));
 }
