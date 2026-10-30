@@ -437,6 +437,26 @@ quizbinf/
   questions are reused: new question and choice rows, so editing the copy
   cannot rewrite what earlier students were asked, and no lectures, so none
   of their answers come along. `tests/test_archive.py`.
+- **Questions can be imported from a Markdown file** (`app/quiz_import.py`,
+  `POST /api/quizzes/{id}/import`), in the format the Markdown handout writes,
+  so a quiz exported *with answers* imports back unchanged: `##` per question
+  (a title after the number becomes a bold first line), the text, then at
+  least two `- [ ]`/`- [x]` choices with exactly one `[x]`, then an optional
+  `>` explanation. A question that breaks a rule is **refused with its reason**
+  and the rest still come in, since the teacher fixes the file rather than a
+  half-guessed question. It is checked first (`dry_run`, the default) and
+  stored only when the teacher confirms. Figures named by a bare filename may
+  be uploaded with the file and go through the same checks as any upload; one
+  that is missing or broken is **left out with a warning** rather than refusing
+  its question, because text comes first and a figure is easily added when
+  editing. The dashboard's *What should the file look like?* popup states the
+  rules. `tests/test_import.py`, `e2e/import.spec.mjs`.
+- **A question may carry an explanation** (`Question.explanation`, Markdown):
+  in the editor, in the Report view only once `revealCorrect()` (folded until
+  opened, since that screen is projected), and in the handouts *with
+  answers*. It is on `QuestionTeacherOut` and deliberately **not** on
+  `QuestionOut`: the student state uses that one, and an explanation names the
+  right answer.
 - **Reordering questions is safe at any time**, unlike deleting one: rounds
   point at question ids, never at positions, so the running order moves and
   nothing else does. `PUT /api/quizzes/{id}/questions/order` takes the
@@ -1004,6 +1024,7 @@ alembic upgrade head
 | `DELETE /api/quizzes/{id}/questions/{qid}` | teacher | delete a question — **409 once it has been asked** |
 | `POST /api/quizzes/{id}/archive`, `…/restore` | teacher | put a quiz away at the end of a course, or bring it back; deletes nothing |
 | `POST /api/quizzes/{id}/copy` | teacher | a new quiz with the same questions and none of the lectures |
+| `POST /api/quizzes/{id}/import?dry_run=` | teacher | add questions from a Markdown file (+ figures); a dry run only reports accepted and refused |
 | `POST /api/sessions?quiz_id=&loadtest=` | teacher | start a lecture session; `loadtest=true` marks a rehearsal, kept out of every attendance report |
 | `DELETE /api/sessions/{code}` | teacher | delete a **load-test** session and the throwaway students it made — **409 for a real one** |
 | `POST /api/auth/loadtest-login` | key holder | **rehearsal only:** sign in a throwaway student; off unless `LOADTEST_KEY` is set |

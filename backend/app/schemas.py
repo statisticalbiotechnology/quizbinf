@@ -72,6 +72,8 @@ class QuestionIn(BaseModel):
     kind: Kind = Kind.choice
     #: For a word cloud: how many entries each student may write.
     max_words: int = Field(default=1, ge=1, le=MAX_WORDS)
+    #: Why the answer is right; Markdown. Teacher-facing only.
+    explanation: str = ""
     choices: list[ChoiceIn] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -97,6 +99,8 @@ class QuestionEdit(BaseModel):
     image_url: str | None = None
     kind: Kind = Kind.choice
     max_words: int = Field(default=1, ge=1, le=MAX_WORDS)
+    #: Why the answer is right; Markdown. Teacher-facing only.
+    explanation: str = ""
     choices: list[ChoiceEdit] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -165,6 +169,14 @@ class QuestionOut(BaseModel):
 
 class QuestionTeacherOut(QuestionOut):
     choices: list[ChoiceTeacherOut]
+    # Here and not on QuestionOut: the student state uses that one, and an
+    # explanation names the right answer.
+    explanation: str = ""
+
+    @computed_field
+    @property
+    def explanation_html(self) -> str:
+        return render_markdown(self.explanation) if self.explanation else ""
 
 
 class QuizOut(BaseModel):

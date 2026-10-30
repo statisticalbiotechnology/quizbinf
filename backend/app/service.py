@@ -1012,6 +1012,7 @@ def update_question(
     choices: list,
     kind: Kind | None = None,
     max_words: int | None = None,
+    explanation: str | None = None,
 ) -> Question:
     """Edit a question in place, keeping recorded answers readable.
 
@@ -1067,6 +1068,8 @@ def update_question(
     # the entries they have, and the cloud counts whatever is stored.
     if max_words is not None:
         question.max_words = max_words if question.kind is Kind.text else 1
+    if explanation is not None:
+        question.explanation = explanation.strip()
 
     kept: list[Choice] = []
     for position, incoming in enumerate(choices):
@@ -1348,6 +1351,7 @@ def copy_quiz(db: Session, quiz: Quiz, owner: User, title: str | None = None) ->
             image_url=question.image_url,
             kind=question.kind,
             max_words=question.max_words,
+            explanation=question.explanation,
         )
         for choice in question.choices:
             new.choices.append(

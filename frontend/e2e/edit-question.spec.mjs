@@ -35,7 +35,7 @@ async function openAddForm(quiz) {
 
 async function addQuestion(quiz, text, choices) {
   const form = await openAddForm(quiz);
-  await form.locator('textarea').fill(text);
+  await form.locator('textarea[name="qtext"]').fill(text);
   const inputs = form.locator('input[placeholder="Choice text"]');
   for (let i = 0; i < choices.length; i++) {
     if (i >= 2) await form.getByRole('button', { name: '+ choice' }).click();
@@ -73,7 +73,7 @@ test('a question can be edited and the change reaches students', async ({ browse
   await expect(editor.locator('textarea[name="qtext"]')).toHaveValue('Orignal typo here');
 
   // The edit form is the same tool as the add form: preview included.
-  await editor.locator('textarea').fill('Corrected **wording** here');
+  await editor.locator('textarea[name="qtext"]').fill('Corrected **wording** here');
   await expect(editor.locator('.preview strong')).toHaveText('wording');
 
   // Reword a choice, and move which one is correct.

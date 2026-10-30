@@ -124,6 +124,15 @@ import { SessionFeed } from './session-feed.service';
                   }
                   @if (drawError(); as e) { <p class="error">{{ e }}</p> }
                 </div>
+
+                <!-- Only once the answer itself is shown, and folded: the
+                     teacher opens it when they want it on the wall. -->
+                @if (revealCorrect(q) && q.explanation_html) {
+                  <details class="explanation">
+                    <summary>Explanation</summary>
+                    <div class="qtext" [mdHtml]="q.explanation_html"></div>
+                  </details>
+                }
               </div>
             }
           </section>
@@ -139,6 +148,8 @@ import { SessionFeed } from './session-feed.service';
   `,
   styles: [
     `
+      .explanation { margin-top: 0.8rem; border-left: 3px solid #ddd; padding-left: 0.8rem; }
+      .explanation summary { cursor: pointer; color: #555; }
       .wrap { max-width: 46rem; margin: 1.5rem auto; padding: 1rem; }
       .with-way-in { max-width: 56rem; display: grid; gap: 1.5rem;
                      grid-template-columns: minmax(0, 1fr) auto; align-items: start; }

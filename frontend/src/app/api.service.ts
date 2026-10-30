@@ -9,6 +9,7 @@ import {
   Comparison,
   Draw,
   Histogram,
+  ImportReport,
   LoginMethods,
   LiveCount,
   Participants,
@@ -107,6 +108,19 @@ export class ApiService {
   /** A new quiz with the same questions and none of the lectures. */
   copyQuiz(id: number, title: string): Observable<Quiz> {
     return this.http.post<Quiz>(`${API_BASE}/api/quizzes/${id}/copy`, { title }, this.opts);
+  }
+  /**
+   * Add questions from a Markdown file, with any figures it names. A dry run
+   * only reports what would be imported and what is refused, and why.
+   */
+  importQuestions(quizId: number, files: File[], dryRun: boolean): Observable<ImportReport> {
+    const form = new FormData();
+    for (const file of files) form.append('files', file, file.name);
+    return this.http.post<ImportReport>(
+      `${API_BASE}/api/quizzes/${quizId}/import?dry_run=${dryRun}`,
+      form,
+      this.opts,
+    );
   }
   /**
    * Render Markdown for the authoring preview.
