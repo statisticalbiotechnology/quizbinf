@@ -1,4 +1,4 @@
-import { Component, EventEmitter, Input, OnDestroy, Output, signal } from '@angular/core';
+import { Component, EventEmitter, Input, OnDestroy, OnInit, Output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { ApiService } from '../api.service';
@@ -18,6 +18,8 @@ export interface QuestionDraft {
   kind: QuestionKind;
   /** For a word cloud: how many entries each student may write. */
   max_words: number;
+  /** Why the answer is right, Markdown; shown to the teacher after the second bout. */
+  explanation: string;
   choices: ChoiceDraft[];
 }
 
@@ -143,6 +145,17 @@ export const MAX_WORDS = 5;
       }
 
       <button type="button" (click)="addChoiceRow()">+ choice</button>
+
+      <label class="explanation">
+        <span>Explanation <span class="kind-hint">(optional; shown in the Report view
+          after the second bout, and in the handout with answers, never on phones)</span></span>
+        <textarea
+          [(ngModel)]="draft.explanation"
+          [name]="'explanation' + formId"
+          rows="3"
+          placeholder="Why the right answer is right. Markdown and $formulas$ work here too."
+        ></textarea>
+      </label>
       }
       <button (click)="save.emit()" [disabled]="!valid()">{{ submitLabel }}</button>
       @if (showCancel) {
@@ -163,6 +176,8 @@ export const MAX_WORDS = 5;
               margin: 0.5rem 0; font-size: 0.9rem; }
       .kind label { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
       .kind-hint { color: #666; font-size: 0.85rem; }
+      .explanation { display: flex; flex-direction: column; gap: 0.25rem; margin: 0.6rem 0; }
+      .explanation textarea { width: 100%; box-sizing: border-box; font: inherit; }
       .words { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0.25rem 0 0.5rem; }
       .choice-row { display: flex; gap: 0.5rem; align-items: center; margin: 0.3rem 0; }
       .mark { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer;
@@ -189,7 +204,7 @@ export const MAX_WORDS = 5;
     `,
   ],
 })
-export class QuestionEditorComponent implements OnDestroy {
+export class QuestionEditorComponent implements OnInit, OnDestroy {
   @Input({ required: true }) draft!: QuestionDraft;
   @Input() submitLabel = 'Save question';
   @Input() showCancel = false;
@@ -215,6 +230,12 @@ export class QuestionEditorComponent implements OnDestroy {
   private previewTimer?: ReturnType<typeof setTimeout>;
 
   constructor(private api: ApiService) {}
+
+  ngOnInit(): void {
+    // An edit opens on an existing question: show it rendered straight away,
+    // not only once something has been typed.
+    if (this.draft.text.trim()) this.refreshPreview();
+  }
 
   ngOnDestroy(): void {
     if (this.previewTimer) clearTimeout(this.previewTimer);

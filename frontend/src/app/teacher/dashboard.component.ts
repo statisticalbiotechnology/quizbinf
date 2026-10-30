@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
 import { ApiService } from '../api.service';
-import { CanvasCourse, Question, Quiz, RosterStatus, SyncSummary } from '../models';
+import { CanvasCourse, ImportReport, Question, Quiz, RosterStatus, SyncSummary } from '../models';
 import { MarkdownHtmlDirective } from '../md-html.directive';
 import { QuestionDraft, QuestionEditorComponent } from './question-editor.component';
 
@@ -308,9 +308,120 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
               [error]="formError"
               (save)="addQuestion(quiz)"
             />
+
+            <!-- Many questions at once, in the format the Markdown handout
+                 writes. Checked before anything is stored, so the teacher sees
+                 what will come in and why anything is refused. -->
+            <div class="import">
+              <!-- The help link sits outside the label: a click inside a file
+                   input's label also opens the file chooser. -->
+              <div class="pick-head">
+                <span id="import-label-{{ quiz.id }}">Or import questions from a Markdown file</span>
+                <button type="button" class="link" (click)="formatHelp.showModal()">
+                  What should the file look like?
+                </button>
+              </div>
+              <label class="pick">
+                <input
+                  [attr.aria-labelledby]="'import-label-' + quiz.id"
+                  type="file"
+                  multiple
+                  accept=".md,.markdown,.txt,image/png,image/jpeg,image/gif,image/webp"
+                  (change)="checkImport(quiz, $event)"
+                />
+              </label>
+              <span class="import-hint">
+                One <code>.md</code> file: <code>## 1.</code> per question, the text, then
+                <code>- [ ]</code>/<code>- [x]</code> choices with exactly one
+                <code>[x]</code>, then an optional <code>&gt;</code> explanation. Figures it
+                names may be chosen with it; any left out can be added when editing.
+              </span>
+              @if (importFor() === quiz.id) {
+                @if (importError(); as msg) {
+                  <p class="error">{{ msg }}</p>
+                }
+                @if (importReport(); as r) {
+                  <div class="import-report">
+                    @for (note of r.notes; track note) {
+                      <p class="error">{{ note }}</p>
+                    }
+                    <ol>
+                      @for (q of r.questions; track $index) {
+                        <li [class.refused]="!q.ok">
+                          <span class="verdict">{{ q.ok ? '✓' : '✗' }}</span>
+                          <span class="q-head">{{ q.heading || 'Question ' + (q.number ?? $index + 1) }}</span>
+                          @if (q.ok) {
+                            <span class="meta">
+                              {{ q.choices.length }} choices{{ q.has_explanation ? ', explanation' : '' }}
+                            </span>
+                          }
+                          @for (e of q.errors; track e) {
+                            <div class="why">{{ e }}</div>
+                          }
+                          @for (w of q.warnings; track w) {
+                            <div class="warn">{{ w }}</div>
+                          }
+                        </li>
+                      }
+                    </ol>
+                    @if (r.dry_run) {
+                      <p>
+                        {{ r.accepted }} to import{{ r.refused ? ', ' + r.refused + ' refused' : '' }}.
+                        @if (r.refused) { Fix the refused ones in the file and import them again later. }
+                      </p>
+                      <button (click)="runImport(quiz)" [disabled]="!r.accepted || importing()">
+                        Import {{ r.accepted }} question{{ r.accepted === 1 ? '' : 's' }}
+                      </button>
+                      <button type="button" class="cancel" (click)="clearImport()">Cancel</button>
+                    } @else {
+                      <p>
+                        Imported {{ r.imported }} question{{ r.imported === 1 ? '' : 's' }}{{ r.refused ? '; ' + r.refused + ' refused, listed above' : '' }}.
+                      </p>
+                      <button type="button" (click)="clearImport()">Done</button>
+                    }
+                  </div>
+                }
+              }
+            </div>
           </details>
         </section>
       }
+
+      <!-- The import format, one click from the file picker. -->
+      <dialog #formatHelp class="format-help" (click)="$event.target === formatHelp && formatHelp.close()">
+        <h3>Importing questions from Markdown</h3>
+        <p>One <code>.md</code> file, saved as UTF-8. Each question looks like this:</p>
+        <pre>## 1. Local alignment
+
+Which algorithm finds the optimal **local** alignment?
+Markdown works: $S = \\log_2 p/q$, &#96;code&#96;, lists, tables.
+
+- [ ] Needleman-Wunsch
+- [x] Smith-Waterman
+- [ ] BLAST
+
+&gt; Why the answer is right (optional).
+&gt; Shown after the second bout, never on phones.</pre>
+        <ul>
+          <li>Every question starts with a <code>##</code> heading. The number is optional;
+            a title after it becomes the question's bold first line.</li>
+          <li>The question text comes first and must not be empty.</li>
+          <li>Then at least two choices, each <code>- [ ]</code> or <code>- [x]</code>,
+            with <strong>exactly one</strong> <code>[x]</code>.</li>
+          <li>After the choices, only an optional explanation as <code>&gt;</code> lines.</li>
+          <li>A <code>#</code> title line at the top is allowed and ignored.</li>
+          <li>Figures: <code>![](name.png)&#123;width=60%&#125;</code>. Choose the image files
+            together with the <code>.md</code>; any not chosen are left out, and can be
+            added when editing.</li>
+        </ul>
+        <p>
+          A question that breaks a rule is refused with the reason, and the others are still
+          imported. Nothing is stored until you confirm. The Markdown handout downloaded
+          <em>with answers</em> is in this format, so a quiz can be exported, edited and
+          imported again.
+        </p>
+        <button type="button" (click)="formatHelp.close()">Close</button>
+      </dialog>
 
       @if (archivedQuizzes().length) {
         <details class="archived">
@@ -360,6 +471,26 @@ import { QuestionDraft, QuestionEditorComponent } from './question-editor.compon
       .quiz { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
       header { display: flex; justify-content: space-between; align-items: center; }
       .quiz-actions { display: inline-flex; gap: 0.4rem; align-items: center; }
+      .import { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px dashed #ddd; }
+      .import .pick-head { font-weight: 600; margin-bottom: 0.3rem; }
+      .import .pick { display: block; }
+      .import .import-hint { display: block; font-size: 0.8rem; color: #666; margin-top: 0.3rem; }
+      .import-report ol { padding-left: 2rem; }
+      .link { background: none; border: none; padding: 0; margin-left: 0.4rem; color: #2c7a51;
+              text-decoration: underline; cursor: pointer; font: inherit; font-weight: 400;
+              font-size: 0.85rem; }
+      .format-help { max-width: 40rem; border: 1px solid #ccc; border-radius: 8px; padding: 1.2rem; }
+      .format-help::backdrop { background: rgba(0, 0, 0, 0.35); }
+      .format-help h3 { margin-top: 0; }
+      .format-help pre { background: #f6f6f6; padding: 0.7rem; border-radius: 6px; overflow-x: auto;
+                         font-size: 0.85rem; }
+      .format-help li { margin: 0.3rem 0; font-size: 0.92rem; }
+      .import-report li { margin: 0.3rem 0; }
+      .import-report .verdict { color: #2c7a51; font-weight: 700; margin-right: 0.3rem; }
+      .import-report li.refused .verdict { color: #c0392b; }
+      .import-report .meta { color: #666; font-size: 0.85rem; margin-left: 0.4rem; }
+      .import-report .why { color: #c0392b; font-size: 0.85rem; }
+      .import-report .warn { color: #8a6d1d; font-size: 0.85rem; }
       .quiz-actions .archive { color: #555; }
       .inline { display: inline-flex; align-items: center; gap: 0.2rem; }
       .archived { border: 1px solid #ddd; border-radius: 8px; padding: 0.6rem 1rem; margin: 1.5rem 0; }
@@ -399,6 +530,12 @@ export class TeacherDashboardComponent implements OnInit {
       .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? '')),
   );
   archiveError = signal('');
+  /** The quiz whose import panel is in use, and what the server made of the file. */
+  importFor = signal<number | null>(null);
+  importReport = signal<ImportReport | null>(null);
+  importError = signal('');
+  importing = signal(false);
+  private importFiles: File[] = [];
   /** Whether the term reports should count lectures from archived quizzes. */
   reportArchived = false;
   newTitle = '';
@@ -450,6 +587,7 @@ export class TeacherDashboardComponent implements OnInit {
       text: '',
       kind: 'choice' as const,
       max_words: 1,
+      explanation: '',
       choices: [
         { text: '', is_correct: false },
         { text: '', is_correct: false },
@@ -555,6 +693,7 @@ export class TeacherDashboardComponent implements OnInit {
       text: q.text,
       kind: q.kind,
       max_words: q.max_words ?? 1,
+      explanation: q.explanation ?? '',
       choices: q.choices.map((c) => ({
         id: c.id,
         text: c.text,
@@ -580,6 +719,7 @@ export class TeacherDashboardComponent implements OnInit {
         image_url: null,
         kind: this.editDraft.kind,
         max_words: this.editDraft.max_words,
+        explanation: this.editDraft.kind === 'text' ? '' : this.editDraft.explanation.trim(),
         choices:
           this.editDraft.kind === 'text'
             ? []
@@ -655,6 +795,7 @@ export class TeacherDashboardComponent implements OnInit {
         image_url: null,
         kind: this.draft.kind,
         max_words: this.draft.max_words,
+        explanation: this.draft.kind === 'text' ? '' : this.draft.explanation.trim(),
         choices: this.draft.kind === 'text' ? [] : choices,
       })
       .subscribe({
@@ -664,6 +805,43 @@ export class TeacherDashboardComponent implements OnInit {
         },
         error: () => (this.formError = 'Could not save (need exactly one correct choice).'),
       });
+  }
+
+  /** Check a Markdown file before importing anything from it. */
+  checkImport(quiz: Quiz, event: Event): void {
+    const input = event.target as HTMLInputElement;
+    this.importFiles = Array.from(input.files ?? []);
+    input.value = ''; // so choosing the same, corrected file again re-checks it
+    this.importFor.set(quiz.id);
+    this.importReport.set(null);
+    this.importError.set('');
+    if (!this.importFiles.length) return;
+    this.api.importQuestions(quiz.id, this.importFiles, true).subscribe({
+      next: (r) => this.importReport.set(r),
+      error: (err) => this.importError.set(err?.error?.detail ?? 'Could not read that file.'),
+    });
+  }
+
+  runImport(quiz: Quiz): void {
+    this.importing.set(true);
+    this.api.importQuestions(quiz.id, this.importFiles, false).subscribe({
+      next: (r) => {
+        this.importReport.set(r);
+        this.importing.set(false);
+        this.reload();
+      },
+      error: (err) => {
+        this.importError.set(err?.error?.detail ?? 'The import failed; nothing was added.');
+        this.importing.set(false);
+      },
+    });
+  }
+
+  clearImport(): void {
+    this.importFor.set(null);
+    this.importReport.set(null);
+    this.importError.set('');
+    this.importFiles = [];
   }
 
   /**

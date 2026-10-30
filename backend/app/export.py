@@ -47,6 +47,12 @@ def as_markdown(quiz: Quiz, base_url: str, answers: bool = True) -> str:
             mark = "[x]" if (answers and choice.is_correct) else "[ ]"
             lines.append(f"- {mark} {choice.text}")
         lines.append("")
+        # The explanation names the answer, so it goes only where answers do,
+        # as the block quote the import reads back.
+        if answers and question.explanation:
+            explanation = absolute_markdown(question.explanation, base_url)
+            lines.extend(f"> {line}".rstrip() for line in explanation.split("\n"))
+            lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -68,6 +74,7 @@ def as_html(quiz: Quiz, base_url: str, answers: bool = True) -> str:
         "img { max-width: 100%; height: auto; }",
         "li.correct { font-weight: 700; }",
         ".answer { color: #2c7a51; }",
+        ".explanation { border-left: 3px solid #ccc; padding-left: 0.8rem; color: #444; }",
         "</style>",
         "</head>",
         "<body>",
@@ -84,6 +91,9 @@ def as_html(quiz: Quiz, base_url: str, answers: bool = True) -> str:
             choice_html = absolute_html(render_inline(choice.text), base_url)
             parts.append(f"<li{css}>{choice_html}{tick}</li>")
         parts.append("</ul>")
+        if answers and question.explanation:
+            explanation_html = absolute_html(render(question.explanation), base_url)
+            parts.append(f'<div class="explanation">{explanation_html}</div>')
     parts.append("</body>")
     parts.append("</html>")
     return "\n".join(parts) + "\n"

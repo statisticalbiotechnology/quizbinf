@@ -47,6 +47,53 @@ def _images_dir(settings: Settings) -> Path:
     return path
 
 
+#: File-name extensions a figure may arrive with in a Markdown import, where
+#: there is no content type to go by: the magic bytes are checked all the same.
+SUFFIX_FOR_EXTENSION = {".png": ".png", ".jpg": ".jpg", ".jpeg": ".jpg", ".gif": ".gif",
+                        ".webp": ".webp"}
+
+
+class ImageRejected(Exception):
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+def check_image(data: bytes, suffix: str | None) -> None:
+    """Refuse anything that is not a figure a browser shows inline."""
+    if suffix is None:
+        raise ImageRejected(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Use a PNG, JPEG, GIF or WebP image"
+        )
+    if len(data) > MAX_BYTES:
+        raise ImageRejected(
+            status.HTTP_413_CONTENT_TOO_LARGE,
+            f"Images must be smaller than {MAX_BYTES // (1024 * 1024)} MB",
+        )
+    if not any(data.startswith(sig) for sig in _SIGNATURES[suffix]):
+        raise ImageRejected(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            "That file does not look like the image type it claims to be",
+        )
+
+
+def store_image(data: bytes, suffix: str, settings: Settings) -> str:
+    """Write a checked figure to the volume and return the URL it is served at."""
+    try:
+        directory = _images_dir(settings)
+    except OSError:
+        raise ImageRejected(
+            status.HTTP_507_INSUFFICIENT_STORAGE,
+            "No writable storage is configured for uploads",
+        )
+    # Random name: the original filename is attacker-controlled, and a
+    # predictable one would let anyone guess at other teachers' figures.
+    name = f"{secrets.token_urlsafe(16)}{suffix}"
+    (directory / name).write_bytes(data)
+    return f"/api/images/{name}"
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def upload_image(
     file: UploadFile = File(...),
@@ -54,38 +101,13 @@ async def upload_image(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Store a figure and return the Markdown to paste into a question."""
-    suffix = ALLOWED.get(file.content_type or "")
-    if suffix is None:
-        raise HTTPException(
-            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            "Use a PNG, JPEG, GIF or WebP image",
-        )
-
     data = await file.read(MAX_BYTES + 1)
-    if len(data) > MAX_BYTES:
-        raise HTTPException(
-            status.HTTP_413_CONTENT_TOO_LARGE,
-            f"Images must be smaller than {MAX_BYTES // (1024 * 1024)} MB",
-        )
-    if not any(data.startswith(sig) for sig in _SIGNATURES[suffix]):
-        raise HTTPException(
-            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            "That file does not look like the image type it claims to be",
-        )
-
     try:
-        directory = _images_dir(settings)
-    except OSError:
-        raise HTTPException(
-            status.HTTP_507_INSUFFICIENT_STORAGE,
-            "No writable storage is configured for uploads",
-        )
-
-    # Random name: the original filename is attacker-controlled, and a
-    # predictable one would let anyone guess at other teachers' figures.
-    name = f"{secrets.token_urlsafe(16)}{suffix}"
-    (directory / name).write_bytes(data)
-    url = f"/api/images/{name}"
+        suffix = ALLOWED.get(file.content_type or "")
+        check_image(data, suffix)
+        url = store_image(data, suffix, settings)
+    except ImageRejected as e:
+        raise HTTPException(e.status_code, e.detail)
     return {"url": url, "markdown": f"![]({url})"}
 
 

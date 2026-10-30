@@ -33,6 +33,9 @@ export interface Question {
   kind: QuestionKind;
   /** For a word cloud: how many entries each student may write. */
   max_words: number;
+  /** Teacher views only: why the answer is right, and the same rendered. */
+  explanation?: string;
+  explanation_html?: string;
   choices: Choice[];
 }
 
@@ -152,6 +155,7 @@ export interface QuestionInput {
   image_url: string | null;
   kind: QuestionKind;
   max_words: number;
+  explanation: string;
   choices: ChoiceInput[];
 }
 
@@ -209,6 +213,7 @@ export interface QuestionEditInput {
   image_url: string | null;
   kind: QuestionKind;
   max_words: number;
+  explanation: string;
   choices: ChoiceEditInput[];
 }
 
@@ -221,4 +226,25 @@ export interface CanvasReadiness {
   unmatched: string[];
   roster_students: number;
   synced_at: string | null;
+}
+
+/** What a Markdown import found, question by question. */
+export interface ImportReport {
+  title: string | null;
+  notes: string[];
+  unused_figures: string[];
+  dry_run: boolean;
+  accepted: number;
+  refused: number;
+  imported: number;
+  questions: {
+    number: number | null;
+    heading: string;
+    ok: boolean;
+    errors: string[];
+    warnings: string[];
+    text_html: string;
+    choices: { text_html: string; is_correct: boolean }[];
+    has_explanation: boolean;
+  }[];
 }

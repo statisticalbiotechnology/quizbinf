@@ -181,6 +181,10 @@ class Question(Base):
     #: For a word cloud, how many entries each student may write. Ignored for
     #: multiple choice, where it stays at its default.
     max_words: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
+    #: Why the right answer is right, in Markdown. For the teacher: shown in the
+    #: Report view once the second bout is halted, and in the handout with
+    #: answers. Never sent to a student's phone, since it gives the answer away.
+    explanation: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
 
     quiz: Mapped[Quiz] = relationship(back_populates="questions")
     choices: Mapped[list["Choice"]] = relationship(
