@@ -12,6 +12,7 @@ import {
   ImportReport,
   LoginMethods,
   LiveCount,
+  MyResult,
   Participants,
   ParticipationReport,
   Phase,
@@ -394,6 +395,10 @@ export class ApiService {
   }
 
   // --- student ---
+  /** Questions whose second bout is halted, with this student's answers. */
+  myResults(code: string): Observable<MyResult[]> {
+    return this.http.get<MyResult[]>(`${API_BASE}/api/sessions/${code}/my-results`, this.opts);
+  }
   sessionState(code: string): Observable<SessionState> {
     return this.http.get<SessionState>(`${API_BASE}/api/sessions/${code}/state`, this.opts);
   }

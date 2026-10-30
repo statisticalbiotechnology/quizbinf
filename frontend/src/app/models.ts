@@ -13,7 +13,7 @@ export interface Choice {
   text: string;
   /** `text` rendered from Markdown and sanitised server-side; bind this. */
   text_html: string;
-  is_correct?: boolean; // present only in teacher views
+  is_correct?: boolean; // teacher views, and a student's finished questions
 }
 
 /**
@@ -135,6 +135,15 @@ export interface Comparison {
   question_id: number;
   pre: Record<number, number> | null;
   post: Record<number, number> | null;
+}
+
+/** A finished question as a student sees it on their phone: counts only. */
+export interface MyResult {
+  question: Question;
+  pre: Record<number, number>;
+  post: Record<number, number>;
+  my_pre: number | null;
+  my_post: number | null;
 }
 
 export interface QuizSession {

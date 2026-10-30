@@ -282,6 +282,21 @@ class ComparisonOut(BaseModel):
     post: dict[int, int] | None
 
 
+class MyResultOut(BaseModel):
+    """One finished question as a student sees it on their phone.
+
+    The correct choice and the explanation are here, unlike in `SessionState`,
+    because a question appears only once its second bout has been halted,
+    which is when the Report view marks them too.
+    """
+
+    question: QuestionTeacherOut
+    pre: dict[int, int]  # choice_id -> number of answers
+    post: dict[int, int]
+    my_pre: int | None
+    my_post: int | None
+
+
 class ParticipantsOut(BaseModel):
     """Room size for the projected join screen. Counts only — never names."""
 
