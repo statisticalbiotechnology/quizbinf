@@ -1324,6 +1324,49 @@ def pre_post_comparison(db: Session, session: QuizSession, question: Question) -
     return result
 
 
+def my_results(db: Session, session: QuizSession, user: User) -> list[dict]:
+    """What a student may see on their phone once a question is finished.
+
+    A question qualifies only when its *second* bout has been halted: that is
+    the moment the Report view marks the correct choice, and before it the
+    distribution would steer the discussion it is meant to follow. Word clouds
+    are left out, having no bars and no right answer.
+
+    Counts only, as everywhere else; of the individual answers the student is
+    given their own and nobody else's.
+    """
+    rounds: dict[int, dict[Phase, Round]] = {}
+    for round_ in session.rounds:
+        rounds.setdefault(round_.question_id, {})[round_.phase] = round_
+    results = []
+    for question_id, phases in rounds.items():
+        pre, post = phases.get(Phase.pre), phases.get(Phase.post)
+        if pre is None or post is None or post.closed_at is None:
+            continue
+        question = post.question
+        if question is None or question.kind is Kind.text:
+            continue
+
+        def mine(round_: Round) -> int | None:
+            for answer in round_.answers:
+                if answer.user_id == user.id:
+                    return answer.choice_id
+            return None
+
+        results.append(
+            {
+                "question": question,
+                "pre": round_histogram(db, pre),
+                "post": round_histogram(db, post),
+                "my_pre": mine(pre),
+                "my_post": mine(post),
+                "closed_at": post.closed_at,
+            }
+        )
+    results.sort(key=lambda r: r["closed_at"], reverse=True)
+    return results
+
+
 @write_path
 def set_quiz_archived(db: Session, quiz: Quiz, archived: bool) -> Quiz:
     """Archive a quiz, or bring it back. Reversible, and it deletes nothing."""

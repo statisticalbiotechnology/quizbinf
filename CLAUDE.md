@@ -97,6 +97,19 @@ Key product requirements:
   from the answerers would publish who answered and, by omission, who did not.
   The drawn names are forced onto the reel so it is a superset by construction
   and the spin can always land.
+- **A finished question goes back to the phones.** Once a question's
+  **second** bout is halted, the student view lists it under *Finished
+  questions*, between rounds: the class's distribution before and after the
+  discussion, the student's own two answers, the correct choice and the
+  explanation (`GET /api/sessions/{code}/my-results`, `service.my_results`).
+  It is the moment the Report view marks the correct choice, and for the same
+  reason: between the bouts the bars would steer the discussion. Counts only,
+  as everywhere; a student is told their own answers and nobody else's. Word
+  clouds are left out. The `state` payload is unchanged and still omits
+  `is_correct`: the correct choice travels only in this endpoint, and only
+  for questions that are over. Phones fetch it when a round is halted, spread
+  over a couple of seconds so a room does not ask in the same instant.
+  `tests/test_my_results.py`, `e2e/student-results.spec.mjs`.
 - **Pre/post pairing.** Every answer is stored with the round it belongs to
   (`pre` or `post`) so the two distributions can be compared per question.
 - **A question is multiple choice or a word cloud** (`Question.kind`). The
@@ -1051,6 +1064,7 @@ alembic upgrade head
 | `GET /api/sessions/{code}/state` | student | full state snapshot (resync) |
 | `GET /api/sessions/{code}/events` | student | SSE state stream |
 | `POST /api/sessions/{code}/answers` | student | submit/change an answer |
+| `GET /api/sessions/{code}/my-results` | student | finished questions: own answers, class counts before/after, correct choice |
 
 ## Decisions made
 
@@ -1104,8 +1118,3 @@ alembic upgrade head
       window. Not built — decide whether it is worth the friction.
 - [ ] **Quiz deletion.** Questions can be created, edited, reordered and
       deleted; deleting a whole quiz is still missing.
-- [ ] Consider showing students the correct answer **on their own phones**
-      after the post round closes. The projected Report view now marks it once
-      the second bout is halted, so the room is told in class; the student
-      `state` payload still omits `is_correct` deliberately, so anyone who was
-      not looking at the screen has no record of it.

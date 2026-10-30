@@ -5,7 +5,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { ApiService } from '../api.service';
 import { MarkdownHtmlDirective } from '../md-html.directive';
 import { AuthService } from '../auth.service';
-import { SessionState } from '../models';
+import { MyResult, SessionState } from '../models';
 
 /** How many times a phone re-sends an answer the server was too busy to take. */
 const SEND_RETRIES = 3;
@@ -74,6 +74,51 @@ const RETRYABLE_STATUSES = [0, 502, 503, 504];
           }
         } @else {
           <p class="waiting">Waiting for the teacher to open a question…</p>
+          @if (results().length) {
+            <section class="results">
+              <h3>Finished questions</h3>
+              @for (r of results(); track r.question.id; let first = $first) {
+                <details class="result" [open]="first">
+                  <summary>
+                    <span class="arrow">▸</span>
+                    <div class="rq" [mdHtml]="r.question.text_html"></div>
+                  </summary>
+                  <p class="legend">
+                    <span class="key pre"></span> first answer
+                    <span class="key post"></span> after discussion
+                    <span class="n">{{ total(r.post) }} answered</span>
+                  </p>
+                  @for (c of r.question.choices; track c.id) {
+                    <div class="rchoice" [class.correct]="c.is_correct">
+                      <div class="rlabel">
+                        @if (c.is_correct) {
+                          <span class="tick" title="Correct">✓ </span>
+                        }
+                        <span class="choice-md" [mdHtml]="c.text_html"></span>
+                        @if (r.my_pre === c.id || r.my_post === c.id) {
+                          <span class="mine">{{ mine(r, c.id) }}</span>
+                        }
+                      </div>
+                      <div class="bar pre">
+                        <span class="track"><i [style.width.%]="share(r.pre, c.id)"></i></span>
+                        <b>{{ share(r.pre, c.id) }}%</b>
+                      </div>
+                      <div class="bar post">
+                        <span class="track"><i [style.width.%]="share(r.post, c.id)"></i></span>
+                        <b>{{ share(r.post, c.id) }}%</b>
+                      </div>
+                    </div>
+                  }
+                  @if (r.my_pre === null && r.my_post === null) {
+                    <p class="note">You did not answer this question.</p>
+                  }
+                  @if (r.question.explanation_html) {
+                    <div class="explanation" [mdHtml]="r.question.explanation_html"></div>
+                  }
+                </details>
+              }
+            </section>
+          }
         }
       } @else if (error()) {
         <p class="error">{{ error() }}</p>
@@ -107,6 +152,37 @@ const RETRYABLE_STATUSES = [0, 502, 503, 504];
       .saved { color: #2c7; margin-top: 1rem; }
       .sending { color: #777; margin-top: 1rem; }
       .error { color: #c0392b; }
+      .results { margin-top: 2rem; }
+      .results h3 { font-size: 1rem; color: #555; }
+      .result { border: 1px solid #ddd; border-radius: 8px; padding: 0.6rem 0.8rem;
+                margin-bottom: 0.8rem; }
+      .result summary { cursor: pointer; font-weight: 600; list-style: none; display: flex;
+                        gap: 0.4rem; align-items: baseline; }
+      .result summary::-webkit-details-marker { display: none; }
+      .arrow { display: inline-block; transition: transform 0.15s; }
+      .result[open] .arrow { transform: rotate(90deg); }
+      .rq { flex: 1; }
+      .legend { font-size: 0.8rem; color: #555; display: flex; gap: 0.4rem;
+                align-items: center; flex-wrap: wrap; }
+      .legend .n { margin-left: auto; }
+      .key { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 2px; }
+      .key.pre, .bar.pre i { background: #b8c4d6; }
+      .key.post, .bar.post i { background: #2c7be5; }
+      .rchoice { margin: 0.7rem 0; }
+      .rlabel .mine { margin-left: 0.3rem; white-space: nowrap; }
+      .rchoice.correct .rlabel { font-weight: 600; }
+      .tick { color: #2c7; }
+      .mine { font-size: 0.75rem; background: #fff3cd; border: 1px solid #e0c060;
+              border-radius: 4px; padding: 0 0.3rem; font-weight: normal; }
+      .bar { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.2rem; }
+      .track { flex: 1; height: 0.9rem; background: #f2f2f2; border-radius: 3px;
+               overflow: hidden; }
+      .track i { display: block; height: 100%; }
+      .bar b { width: 2.6rem; text-align: right; font-size: 0.75rem; font-weight: normal;
+               color: #555; }
+      .note { color: #777; font-size: 0.9rem; }
+      .explanation { border-top: 1px solid #eee; margin-top: 0.6rem; padding-top: 0.4rem;
+                     font-size: 0.95rem; }
     `,
   ],
 })
@@ -122,6 +198,11 @@ export class StudentSessionComponent implements OnInit, OnDestroy {
   /** The question `words` was laid out for, so a new one starts empty. */
   private wordsFor: number | null = null;
   sendError = signal<string>('');
+  /** Questions whose second bout is halted, newest first. */
+  results = signal<MyResult[]>([]);
+  /** The open round when state last arrived, to notice one being halted. */
+  private lastRound: number | null | undefined = undefined;
+  private resultsTimer?: ReturnType<typeof setTimeout>;
   private code = '';
   private teardown?: () => void;
 
@@ -147,6 +228,42 @@ export class StudentSessionComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.teardown?.();
+    clearTimeout(this.resultsTimer);
+  }
+
+  /**
+   * Fetch the finished questions, once a round has been halted.
+   *
+   * Every phone in the room learns of the halt from the same SSE event, so
+   * the fetch is spread over a couple of seconds rather than arriving as one
+   * burst; nobody is reading results to the millisecond.
+   */
+  private loadResults(spread: boolean): void {
+    clearTimeout(this.resultsTimer);
+    const fetch = () =>
+      this.api.myResults(this.code).subscribe({
+        next: (r) => this.results.set(r),
+        error: () => {}, // the next halt tries again
+      });
+    if (!spread) {
+      fetch();
+      return;
+    }
+    this.resultsTimer = setTimeout(fetch, Math.random() * 2500);
+  }
+
+  share(counts: Record<number, number>, choiceId: number): number {
+    const total = this.total(counts);
+    return total ? Math.round((100 * (counts[choiceId] ?? 0)) / total) : 0;
+  }
+
+  total(counts: Record<number, number>): number {
+    return Object.values(counts).reduce((a, b) => a + b, 0);
+  }
+
+  mine(r: MyResult, choiceId: number): string {
+    if (r.my_pre === choiceId && r.my_post === choiceId) return 'you, both times';
+    return r.my_pre === choiceId ? 'you, first' : 'you, after discussion';
   }
 
   private resync(): void {
@@ -166,6 +283,12 @@ export class StudentSessionComponent implements OnInit, OnDestroy {
   }
 
   private applyState(s: SessionState): void {
+    const round = s.open_round?.id ?? null;
+    if (round === null && this.lastRound !== null) {
+      // Arrived, or a round was just halted: the latter may finish a question.
+      this.loadResults(this.lastRound !== undefined);
+    }
+    this.lastRound = round;
     this.state.set(s);
     // The server tells us our own current answer; trust it over local state.
     this.selected.set(s.my_choice_id);
