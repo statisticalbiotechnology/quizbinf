@@ -60,6 +60,9 @@ def test_own_answers_and_the_class_in_counts(teacher_client, make_client):
     assert result["pre"] == {str(choices[0]): 0, str(choices[1]): 1, str(choices[2]): 1}
     assert result["post"] == {str(choices[0]): 2, str(choices[1]): 0, str(choices[2]): 0}
     assert [c["is_correct"] for c in result["question"]["choices"]] == [True, False, False]
+    # The reasoning comes from two students in class, not from the phone.
+    assert "explanation" not in result["question"]
+    assert "explanation_html" not in result["question"]
     # Counts only: nothing in the payload names another student.
     assert "bo" not in str(result)
 

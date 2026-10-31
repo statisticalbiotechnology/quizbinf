@@ -100,8 +100,10 @@ Key product requirements:
 - **A finished question goes back to the phones.** Once a question's
   **second** bout is halted, the student view lists it under *Finished
   questions*, between rounds: the class's distribution before and after the
-  discussion, the student's own two answers, the correct choice and the
-  explanation (`GET /api/sessions/{code}/my-results`, `service.my_results`).
+  discussion, the student's own two answers and the correct choice
+  (`GET /api/sessions/{code}/my-results`, `service.my_results`). **Not the
+  explanation**: the teacher has two students explain in class, and a phone
+  that already shows the answer's reasoning would pre-empt them.
   It is the moment the Report view marks the correct choice, and for the same
   reason: between the bouts the bars would steer the discussion. Counts only,
   as everywhere; a student is told their own answers and nobody else's. Word
