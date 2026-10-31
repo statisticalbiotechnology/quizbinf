@@ -282,15 +282,22 @@ class ComparisonOut(BaseModel):
     post: dict[int, int] | None
 
 
+class QuestionResultOut(QuestionOut):
+    """A finished question for a student's phone: choices marked, and no
+    explanation, which the teacher gets from two students in class."""
+
+    choices: list[ChoiceTeacherOut]
+
+
 class MyResultOut(BaseModel):
     """One finished question as a student sees it on their phone.
 
-    The correct choice and the explanation are here, unlike in `SessionState`,
-    because a question appears only once its second bout has been halted,
-    which is when the Report view marks them too.
+    The correct choice is here, unlike in `SessionState`, because a question
+    appears only once its second bout has been halted, which is when the
+    Report view marks it too.
     """
 
-    question: QuestionTeacherOut
+    question: QuestionResultOut
     pre: dict[int, int]  # choice_id -> number of answers
     post: dict[int, int]
     my_pre: int | None

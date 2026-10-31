@@ -112,9 +112,6 @@ const RETRYABLE_STATUSES = [0, 502, 503, 504];
                   @if (r.my_pre === null && r.my_post === null) {
                     <p class="note">You did not answer this question.</p>
                   }
-                  @if (r.question.explanation_html) {
-                    <div class="explanation" [mdHtml]="r.question.explanation_html"></div>
-                  }
                 </details>
               }
             </section>
@@ -181,8 +178,6 @@ const RETRYABLE_STATUSES = [0, 502, 503, 504];
       .bar b { width: 2.6rem; text-align: right; font-size: 0.75rem; font-weight: normal;
                color: #555; }
       .note { color: #777; font-size: 0.9rem; }
-      .explanation { border-top: 1px solid #eee; margin-top: 0.6rem; padding-top: 0.4rem;
-                     font-size: 0.95rem; }
     `,
   ],
 })
