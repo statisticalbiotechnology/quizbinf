@@ -133,6 +133,8 @@ describe('StudentSessionComponent answering under load', () => {
       my_choice_id: null,
     });
     expect(component.selected()).toBeNull();
+    // With no round open the phone asks for the finished questions.
+    http.expectOne((r) => r.url.endsWith('/my-results')).flush([]);
   }));
 
   it('sends a word for a cloud question, and re-sends it through a 502', fakeAsync(() => {

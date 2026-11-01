@@ -35,6 +35,7 @@ from ..schemas import (
     HistogramOut,
     WordCloudOut,
     LiveCountOut,
+    MyResultOut,
     OpenRoundIn,
     ParticipantsOut,
     ParticipationReportOut,
@@ -638,6 +639,20 @@ def session_state(
     if user.id != session.quiz.owner_id:
         service.record_participant(db, session, user)
     return _state(db, session, user)
+
+
+@router.get("/{code}/my-results", response_model=list[MyResultOut])
+def my_results(
+    code: str, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> list[dict]:
+    """The questions this lecture has finished, for the student's phone.
+
+    Each with the student's own two answers and the class's distribution
+    before and after the discussion, newest first. A question is listed only
+    once its second bout is halted; see `service.my_results`.
+    """
+    session = _session_by_code(db, code)
+    return service.my_results(db, session, user)
 
 
 @router.post("/{code}/answers")
